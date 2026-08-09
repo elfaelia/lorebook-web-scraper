@@ -1,0 +1,392 @@
+/**
+ * Lorebook Web Scraper — backend module. v1.7
+ *
+ * Runs in an isolated Spindle runtime. It does three jobs:
+ *   1. lists the user's world books,
+ *   2. fetches a page through the host CORS proxy,
+ *   3. writes finished entries into a world book.
+ *
+ * HTML is parsed in the frontend module, where a real DOMParser exists.
+ *
+ * Operator-scoped installs (the extension installed globally rather than for a
+ * single user) require the user ID on every data call. The host is not
+ * explicit about where that argument goes, so each call is attempted in a few
+ * shapes and the one that works is remembered for the rest of the session.
+ */
+
+const winningShape = {};
+
+function message(err) {
+  return err && err.message ? String(err.message) : String(err);
+}
+
+/**
+ * Run the first variant that succeeds. Variants are [label, fn] pairs.
+ * Once one works for a given operation it is used directly from then on.
+ */
+async function attempt(operation, variants) {
+  const remembered = winningShape[operation];
+  if (remembered) {
+    const match = variants.find((v) => v[0] === remembered);
+    if (match) {
+      try {
+        return await match[1]();
+      } catch (err) {
+        delete winningShape[operation];
+        throw err;
+      }
+    }
+  }
+
+  const failures = [];
+  for (const [label, run] of variants) {
+    try {
+      const result = await run();
+      winningShape[operation] = label;
+      spindle.log.info(`Lorebook Web Scraper: ${operation} succeeded using ${label}`);
+      return result;
+    } catch (err) {
+      failures.push(`  ${label} → ${message(err)}`);
+    }
+  }
+  throw new Error(`${operation} failed in every call shape:\n${failures.join('\n')}`);
+}
+
+function textOf(body) {
+  if (typeof body === 'string') return body;
+  if (body == null) return '';
+  return String(body);
+}
+
+/** The host may hand back {data:[...]}, a bare array, or {books:[...]}. */
+function asBookList(result) {
+  if (!result) return [];
+  if (Array.isArray(result)) return result;
+  if (Array.isArray(result.data)) return result.data;
+  if (Array.isArray(result.books)) return result.books;
+  if (Array.isArray(result.items)) return result.items;
+  return [];
+}
+
+async function grantedList() {
+  try {
+    const granted = await spindle.permissions.getGranted();
+    return Array.isArray(granted) ? granted : [];
+  } catch (err) {
+    return [`<could not read: ${message(err)}>`];
+  }
+}
+
+/**
+ * The handler's userId argument is the primary source. If the host leaves it
+ * empty, fall back to whatever the frontend could see, then to the users API.
+ */
+async function resolveUserId(handlerUserId, payload) {
+  if (handlerUserId) return { id: handlerUserId, from: 'message handler' };
+  if (payload && payload.clientUserId) return { id: payload.clientUserId, from: 'frontend context' };
+
+  const probes = [
+    ['users.getCurrent', () => spindle.users.getCurrent()],
+    ['users.current', () => spindle.users.current()],
+    ['users.me', () => spindle.users.me()],
+    ['users.list', () => spindle.users.list({ limit: 1 })],
+  ];
+  for (const [label, run] of probes) {
+    try {
+      const result = await run();
+      const found = Array.isArray(result) ? result[0]
+        : result && Array.isArray(result.data) ? result.data[0]
+        : result;
+      if (found && found.id) return { id: found.id, from: label };
+    } catch (err) { /* try the next probe */ }
+  }
+  return { id: undefined, from: 'nowhere — none of the sources had one' };
+}
+
+spindle.onFrontendMessage(async (payload, handlerUserId) => {
+  const resolved = await resolveUserId(handlerUserId, payload);
+  const userId = resolved.id;
+  const requestId = payload && payload.requestId;
+  const reply = (body) => spindle.sendToFrontend({ requestId, ...body }, userId || handlerUserId);
+  const fail = (error) => reply({ type: 'lws:error', error });
+
+  if (!payload || typeof payload.type !== 'string') return;
+  if (!payload.type.startsWith('lws:')) return;
+
+  const books = () => spindle.world_books;
+  const entries = () => spindle.world_books.entries;
+
+  try {
+    switch (payload.type) {
+      case 'lws:diag': {
+        const granted = await grantedList();
+        let cachedBooks = 'error';
+        let cachedCors = 'error';
+        try { cachedBooks = spindle.permissions.has('world_books'); } catch (e) { /* leave as error */ }
+        try { cachedCors = spindle.permissions.has('cors_proxy'); } catch (e) { /* leave as error */ }
+
+        return reply({
+          type: 'lws:diag_result',
+          granted,
+          userId: userId ? `${String(userId).slice(0, 8)}… (from ${resolved.from})` : `missing — ${resolved.from}`,
+          cachedWorldBooks: cachedBooks,
+          cachedCors,
+          worldBooksApi: typeof spindle.world_books,
+          entriesApi: spindle.world_books ? typeof spindle.world_books.entries : 'n/a',
+          corsApi: typeof spindle.cors,
+          shapes: Object.keys(winningShape).length
+            ? Object.entries(winningShape).map(([k, v]) => `${k}=${v}`).join(', ')
+            : 'none learned yet',
+          spindleKeys: Object.keys(spindle || {}).sort().join(', '),
+        });
+      }
+
+      case 'lws:list_books': {
+        const options = { limit: 200, offset: 0 };
+        let result;
+        try {
+          result = await attempt('world_books.list', [
+            ['options.userId', () => books().list({ ...options, userId })],
+            ['second argument', () => books().list(options, userId)],
+            ['no userId', () => books().list(options)],
+          ]);
+        } catch (err) {
+          const granted = await grantedList();
+          return fail(`${message(err)}\nHost says these are granted: ${granted.length ? granted.join(', ') : '(none)'}`);
+        }
+
+        const list = asBookList(result)
+          .map((b) => ({ id: b.id, name: b.name || b.title || '(unnamed)' }))
+          .filter((b) => b.id);
+
+        return reply({
+          type: 'lws:books',
+          books: list,
+          rawShape: result && typeof result === 'object' ? Object.keys(result).join(', ') : typeof result,
+          total: result && typeof result.total === 'number' ? result.total : list.length,
+        });
+      }
+
+      case 'lws:create_book': {
+        const name = String(payload.name || '').trim();
+        if (!name) return fail('Give the new lorebook a name.');
+        const input = { name, description: 'Created by Lorebook Web Scraper' };
+
+        const book = await attempt('world_books.create', [
+          ['second argument', () => books().create(input, userId)],
+          ['input.userId', () => books().create({ ...input, userId })],
+          ['no userId', () => books().create(input)],
+        ]);
+
+        return reply({ type: 'lws:book_created', book: { id: book.id, name: book.name } });
+      }
+
+      case 'lws:fetch': {
+        const url = String(payload.url || '').trim();
+        if (!/^https?:\/\//i.test(url)) return fail(`Not a usable URL: ${url}`);
+
+        const init = {
+          method: 'GET',
+          responseType: 'text',
+          headers: {
+            Accept: 'text/html,application/xhtml+xml',
+            'Accept-Language': 'en',
+          },
+        };
+
+        const response = await attempt('cors', [
+          ['no userId', () => spindle.cors(url, init)],
+          ['third argument', () => spindle.cors(url, init, userId)],
+        ]);
+
+        const status = response && typeof response.status === 'number' ? response.status : 0;
+        if (status >= 400 || status === 0) {
+          return fail(`The server returned ${status || 'no response'} for ${url}`);
+        }
+
+        const html = textOf(response.body);
+        if (html.length < 40) return fail(`That page came back empty (${url})`);
+
+        return reply({ type: 'lws:fetched', url, html });
+      }
+
+      case 'lws:create_entry': {
+        const bookId = String(payload.bookId || '').trim();
+        if (!bookId) return fail('No lorebook selected.');
+        const entry = payload.entry || {};
+
+        const created = await attempt('world_books.entries.create', [
+          ['third argument', () => entries().create(bookId, entry, userId)],
+          ['input.userId', () => entries().create(bookId, { ...entry, userId })],
+          ['no userId', () => entries().create(bookId, entry)],
+        ]);
+
+        return reply({ type: 'lws:entry_created', id: created && created.id, comment: entry.comment });
+      }
+
+      case 'lws:list_entries': {
+        const bookId = String(payload.bookId || '').trim();
+        if (!bookId) return fail('No lorebook selected.');
+
+        const collected = [];
+        let offset = 0;
+        let total = 0;
+
+        for (let page = 0; page < 40; page++) {
+          const options = { limit: 200, offset };
+          const result = await attempt('world_books.entries.list', [
+            ['options.userId', () => entries().list(bookId, { ...options, userId })],
+            ['third argument', () => entries().list(bookId, options, userId)],
+            ['no userId', () => entries().list(bookId, options)],
+          ]);
+
+          const batch = result && Array.isArray(result.data) ? result.data
+            : Array.isArray(result) ? result : [];
+          if (typeof (result || {}).total === 'number') total = result.total;
+
+          collected.push(...batch);
+          if (batch.length < options.limit) break;
+          offset += batch.length;
+        }
+
+        return reply({
+          type: 'lws:entries',
+          total: total || collected.length,
+          entries: collected.map((e) => ({
+            id: e.id,
+            comment: e.comment || '(no label)',
+            content: typeof e.content === 'string' ? e.content.slice(0, 6000) : '',
+            vectorized: !!e.vectorized,
+            keyCount: Array.isArray(e.key) ? e.key.length : 0,
+            constant: !!e.constant,
+            disabled: !!e.disabled,
+            hasBackup: !!(e.extensions && e.extensions.lws_original_keys),
+            key: Array.isArray(e.key) ? e.key : [],
+            keysecondary: Array.isArray(e.keysecondary) ? e.keysecondary : [],
+            extensions: e.extensions && typeof e.extensions === 'object' ? e.extensions : {},
+          })),
+        });
+      }
+
+      case 'lws:update_entry': {
+        const entryId = String(payload.entryId || '').trim();
+        if (!entryId) return fail('No entry id supplied.');
+        const patch = payload.patch || {};
+
+        const updated = await attempt('world_books.entries.update', [
+          ['third argument', () => entries().update(entryId, patch, userId)],
+          ['input.userId', () => entries().update(entryId, { ...patch, userId })],
+          ['no userId', () => entries().update(entryId, patch)],
+        ]);
+
+        return reply({ type: 'lws:entry_updated', id: updated && updated.id });
+      }
+
+      default:
+        return;
+    }
+  } catch (err) {
+    const text = message(err);
+    spindle.log.error(`Lorebook Web Scraper: ${text}`);
+    if (text.includes('PERMISSION_DENIED')) {
+      const granted = await grantedList();
+      return fail(`${text}\nHost says these are granted: ${granted.length ? granted.join(', ') : '(none)'}`);
+    }
+    return fail(text);
+  }
+});
+
+
+/* ------------------------------------------------------------------ */
+/* Continue fix for Claude 4.6+                                        */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Anthropic removed assistant-message prefill at Opus 4.6. Any request whose
+ * final message has role "assistant" is rejected with a 400 — "the
+ * conversation must end with a user message". Lumiverse builds a Continue by
+ * leaving the partial reply as the last message, so Continue fails on 4.6+
+ * whenever that message survives context trimming.
+ *
+ * This interceptor only touches generationType === "continue". It lifts the
+ * trailing assistant fragment out of the messages array and restates it inside
+ * a final user turn asking for the continuation only. The request then ends on
+ * a user message and is accepted.
+ *
+ * Lumiverse appends continue output to the existing chat message itself, so
+ * the reply still grows in place rather than starting a new bubble.
+ */
+
+/** Messages carry either a plain string or an array of typed parts. */
+function contentToText(content) {
+  if (typeof content === 'string') return content;
+  if (!Array.isArray(content)) return '';
+  return content
+    .filter((part) => part && part.type === 'text' && typeof part.text === 'string')
+    .map((part) => part.text)
+    .join('');
+}
+
+function continuationInstruction(fragment) {
+  return [
+    'Continue your previous reply from exactly where it stops. That reply so far was:',
+    '',
+    '<partial_reply>',
+    fragment,
+    '</partial_reply>',
+    '',
+    'Output only the continuation. Do not repeat any part of the text above, do not restate the',
+    'last sentence, and do not open with a summary, preamble, or acknowledgement. Your output will',
+    'be joined directly onto the end of that text, so begin with the exact next character —',
+    'including a leading space if one is needed, or the rest of the word if it stops mid-word.',
+    'Keep the same voice, tense, and formatting.',
+  ].join('\n');
+}
+
+spindle.registerInterceptor(async (messages, context) => {
+  const generationType = context && context.generationType;
+
+  try {
+    const roles = Array.isArray(messages) ? messages.map((m) => m && m.role).join(',') : 'not-an-array';
+    spindle.log.info(`[continue-fix] invoked: generationType=${generationType} count=${Array.isArray(messages) ? messages.length : 0} tail=${roles.split(',').slice(-4).join(',')}`);
+
+    if (generationType !== 'continue') return messages;
+    if (!Array.isArray(messages) || !messages.length) return messages;
+
+    // Find the last assistant turn that has no user turn after it. Some presets
+    // append system blocks below the reply being continued, so the assistant
+    // message is not always literally last.
+    let index = -1;
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const role = messages[i] && messages[i].role;
+      if (role === 'user') break;
+      if (role === 'assistant') { index = i; break; }
+    }
+
+    if (index === -1) {
+      spindle.log.info('[continue-fix] no trailing assistant turn found — leaving prompt alone');
+      return messages;
+    }
+
+    const fragment = contentToText(messages[index].content).replace(/\s+$/, '');
+    if (!fragment) {
+      spindle.log.info(`[continue-fix] assistant turn at ${index} had no text content — leaving prompt alone`);
+      return messages;
+    }
+
+    const rebuilt = messages.slice(0, index).concat(messages.slice(index + 1));
+    rebuilt.push({ role: 'user', content: continuationInstruction(fragment) });
+
+    spindle.log.info(`[continue-fix] rewrote assistant turn ${index} as a trailing user turn (${fragment.length} chars, ${messages.length} → ${rebuilt.length} messages)`);
+
+    return {
+      messages: rebuilt,
+      breakdown: [{ messageIndex: rebuilt.length - 1, name: 'Continue (prefill rewritten)' }],
+    };
+  } catch (err) {
+    spindle.log.error(`[continue-fix] failed, passing prompt through unchanged: ${message(err)}`);
+    return messages;
+  }
+}, 200);
+
+spindle.log.info('Lorebook Web Scraper backend ready (v1.7). Continue fix registered.');
