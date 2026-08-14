@@ -136,7 +136,7 @@ spindle.onFrontendMessage(async (payload, handlerUserId) => {
 
         return reply({
           type: 'lws:diag_result',
-          backendVersion: '2.0.0',
+          backendVersion: '2.1.0',
           generateType: typeof spindle.generate,
           generateMethods: (spindle.generate && typeof spindle.generate === 'object')
             ? Object.keys(spindle.generate).filter((k) => typeof spindle.generate[k] === 'function').join(', ')
@@ -400,32 +400,45 @@ spindle.onFrontendMessage(async (payload, handlerUserId) => {
         ].join('\n');
 
         const maxTokens = Math.max(1024, Math.ceil(targetTokens * 3));
-        const body = { messages: [{ role: 'user', content: prompt }], maxTokens, temperature: 0.3 };
-        if (connectionId) body.connectionId = connectionId;
+        const base = { messages: [{ role: 'user', content: prompt }], maxTokens, temperature: 0.3, userId };
 
-        // Documented generation entry points, most suitable first.
-        // "quiet" is the background/utility generation that does not touch the chat.
+        // The winning call shape is generate.quiet({ ...body, userId }). What it still
+        // needs is a connection profile, and the key name for that is not documented,
+        // so try the likely names. If the caller picked nothing, resolve the first
+        // available connection rather than relying on an implicit default.
+        let chosenConnection = connectionId;
+        if (!chosenConnection) {
+          try {
+            const listed = await spindle.connections.list({ limit: 50, offset: 0, userId });
+            const rows = Array.isArray(listed) ? listed
+              : listed && Array.isArray(listed.data) ? listed.data
+              : listed && Array.isArray(listed.connections) ? listed.connections : [];
+            const active = rows.find((c) => c.isActive || c.active || c.isDefault || c.default) || rows[0];
+            if (active && active.id) {
+              chosenConnection = active.id;
+              spindle.log.info(`Lorebook Web Scraper: no connection chosen, using "${active.name || active.id}"`);
+            }
+          } catch (err) {
+            spindle.log.error(`Lorebook Web Scraper: could not resolve a connection — ${message(err)}`);
+          }
+        }
+
+        const connectionKeys = ['connectionId', 'connectionProfileId', 'profileId', 'connection', 'connection_id'];
         const gen = spindle.generate;
-        const preferredOrder = ['quiet', 'raw', 'quietTracked', 'batch', 'assemble'];
+        const methodOrder = ['quiet', 'raw', 'quietTracked', 'batch'];
         const available = (gen && typeof gen === 'object')
           ? Object.keys(gen).filter((k) => typeof gen[k] === 'function')
           : [];
-        const ordered = [
-          ...preferredOrder.filter((n) => available.includes(n)),
-          ...available.filter((n) => !preferredOrder.includes(n) && !/stream|observe|dryRun/i.test(n)),
-        ];
-
-        if (!ordered.length) {
-          return fail(`spindle.generate exposes no usable method. Saw: [${available.join(', ') || 'none'}]`);
-        }
+        const ordered = methodOrder.filter((n) => available.includes(n));
 
         const variants = [];
         for (const name of ordered) {
-          variants.push([`${name}(userId, body)`, () => gen[name](userId, body)]);
-          variants.push([`${name}(body, userId)`, () => gen[name](body, userId)]);
-          variants.push([`${name}({...body, userId})`, () => gen[name]({ ...body, userId })]);
-          variants.push([`${name}(userId, prompt, opts)`, () => gen[name](userId, prompt, { connectionId, maxTokens })]);
-          variants.push([`${name}(body)`, () => gen[name](body)]);
+          if (chosenConnection) {
+            for (const key of connectionKeys) {
+              variants.push([`${name}({...body, ${key}})`, () => gen[name]({ ...base, [key]: chosenConnection })]);
+            }
+          }
+          variants.push([`${name}({...body}) no connection`, () => gen[name]({ ...base })]);
         }
 
         let result;
@@ -454,7 +467,7 @@ spindle.onFrontendMessage(async (payload, handlerUserId) => {
         ).trim();
 
         if (!condensed) {
-          return fail(`No text from spindle.generate. Tried ${variants.length} shapes across [${ordered.join(', ')}]. Failures: ${failures.slice(0, 6).join(' | ') || '(none recorded)'}`);
+          return fail(`No text from generate. Connection used: ${chosenConnection || 'none resolved'}. Failures: ${failures.slice(0, 6).join(' | ') || '(none)'}`);
         }
 
         spindle.log.info(`Lorebook Web Scraper: condense worked via ${usedShape}`);

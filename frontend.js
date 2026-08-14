@@ -557,7 +557,7 @@ export function setup(ctx) {
       page.text = res.text;
       page.condensed = true;
       render();
-      log(`Condensed to ${res.text.length} characters.`);
+      log(`Condensed to ${res.text.length} characters${res.shape ? ` (via ${res.shape})` : ''}.`);
     } catch (err) {
       log(`Condensing failed — ${err.message}`);
     }
@@ -694,7 +694,7 @@ export function setup(ctx) {
     try {
       const d = await call('lws:diag', {}, 25000);
       log('— Setup check —');
-      log(`Frontend 2.0 · Backend ${d.backendVersion || 'older — it did not reload'}`);
+      log(`Frontend 2.1 · Backend ${d.backendVersion || 'older — it did not reload'}`);
       log(`generate: ${d.generateType} · ${d.generateMethods}`);
       log(`User ID: ${d.userId}`);
       log(`Granted: ${(d.granted || []).join(', ') || '(none)'}`);
