@@ -1,5 +1,5 @@
 /**
- * Lorebook Web Scraper — backend module. v1.16
+ * Lorebook Web Scraper — backend module. v2.0
  *
  * Runs in an isolated Spindle runtime. It does three jobs:
  *   1. lists the user's world books,
@@ -136,7 +136,7 @@ spindle.onFrontendMessage(async (payload, handlerUserId) => {
 
         return reply({
           type: 'lws:diag_result',
-          backendVersion: '1.16.0',
+          backendVersion: '2.0.0',
           generateType: typeof spindle.generate,
           generateMethods: (spindle.generate && typeof spindle.generate === 'object')
             ? Object.keys(spindle.generate).filter((k) => typeof spindle.generate[k] === 'function').join(', ')
@@ -403,37 +403,29 @@ spindle.onFrontendMessage(async (payload, handlerUserId) => {
         const body = { messages: [{ role: 'user', content: prompt }], maxTokens, temperature: 0.3 };
         if (connectionId) body.connectionId = connectionId;
 
-        // spindle.generate is an object on this build, so find its callable method.
+        // Documented generation entry points, most suitable first.
+        // "quiet" is the background/utility generation that does not touch the chat.
         const gen = spindle.generate;
-        const methodNames = [];
-        if (typeof gen === 'function') methodNames.push('(self)');
-        if (gen && typeof gen === 'object') {
-          for (const key of Object.keys(gen)) {
-            if (typeof gen[key] === 'function') methodNames.push(key);
-          }
-          try {
-            const proto = Object.getPrototypeOf(gen) || {};
-            for (const key of Object.getOwnPropertyNames(proto)) {
-              if (key !== 'constructor' && typeof gen[key] === 'function' && !methodNames.includes(key)) {
-                methodNames.push(key);
-              }
-            }
-          } catch (e) { /* ignore */ }
+        const preferredOrder = ['quiet', 'raw', 'quietTracked', 'batch', 'assemble'];
+        const available = (gen && typeof gen === 'object')
+          ? Object.keys(gen).filter((k) => typeof gen[k] === 'function')
+          : [];
+        const ordered = [
+          ...preferredOrder.filter((n) => available.includes(n)),
+          ...available.filter((n) => !preferredOrder.includes(n) && !/stream|observe|dryRun/i.test(n)),
+        ];
+
+        if (!ordered.length) {
+          return fail(`spindle.generate exposes no usable method. Saw: [${available.join(', ') || 'none'}]`);
         }
-
-        // Prefer obviously generation-shaped names, then try the rest.
-        const preferred = methodNames.filter((n) => /^(text|create|complete|completion|generate|run|call|chat|prompt|invoke|simple)/i.test(n));
-        const ordered = [...preferred, ...methodNames.filter((n) => !preferred.includes(n))];
-
-        const invoke = (name, args) => (name === '(self)' ? gen(...args) : gen[name](...args));
 
         const variants = [];
         for (const name of ordered) {
-          variants.push([`${name}(userId, body)`, () => invoke(name, [userId, body])]);
-          variants.push([`${name}(body, userId)`, () => invoke(name, [body, userId])]);
-          variants.push([`${name}({...body, userId})`, () => invoke(name, [{ ...body, userId }])]);
-          variants.push([`${name}(userId, prompt, opts)`, () => invoke(name, [userId, prompt, { connectionId, maxTokens }])]);
-          variants.push([`${name}(body)`, () => invoke(name, [body])]);
+          variants.push([`${name}(userId, body)`, () => gen[name](userId, body)]);
+          variants.push([`${name}(body, userId)`, () => gen[name](body, userId)]);
+          variants.push([`${name}({...body, userId})`, () => gen[name]({ ...body, userId })]);
+          variants.push([`${name}(userId, prompt, opts)`, () => gen[name](userId, prompt, { connectionId, maxTokens })]);
+          variants.push([`${name}(body)`, () => gen[name](body)]);
         }
 
         let result;
@@ -442,10 +434,10 @@ spindle.onFrontendMessage(async (payload, handlerUserId) => {
         for (const [label, run] of variants) {
           try {
             const r = await run();
-            if (r != null) { result = r; usedShape = label; break; }
-            failures.push(`${label}: null`);
+            if (r != null && r !== '') { result = r; usedShape = label; break; }
+            failures.push(`${label} -> empty`);
           } catch (err) {
-            failures.push(`${label}: ${message(err)}`);
+            failures.push(`${label} -> ${message(err)}`);
           }
         }
 
@@ -462,7 +454,7 @@ spindle.onFrontendMessage(async (payload, handlerUserId) => {
         ).trim();
 
         if (!condensed) {
-          return fail(`No usable text from spindle.generate. Methods available: [${methodNames.join(', ') || 'none'}]. First failures: ${failures.slice(0, 5).join(' | ')}`);
+          return fail(`No text from spindle.generate. Tried ${variants.length} shapes across [${ordered.join(', ')}]. Failures: ${failures.slice(0, 6).join(' | ') || '(none recorded)'}`);
         }
 
         spindle.log.info(`Lorebook Web Scraper: condense worked via ${usedShape}`);
@@ -577,4 +569,4 @@ spindle.registerInterceptor(async (messages, context) => {
   }
 }, 200);
 
-spindle.log.info('Lorebook Web Scraper backend ready (v1.16). Continue fix registered.');
+spindle.log.info('Lorebook Web Scraper backend ready (v2.0). Continue fix registered.');

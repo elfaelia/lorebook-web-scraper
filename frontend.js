@@ -310,6 +310,24 @@ export function setup(ctx) {
     .lws-status .lws-head { color: var(--lumiverse-text); font-weight: 600;
       margin-top: 4px; letter-spacing: .02em; }
     .lws-status .lws-head::before { content: ""; }
+    .lws-step { display: flex; flex-direction: column; gap: 7px;
+      padding: 10px; border: 1px solid var(--lumiverse-border);
+      border-radius: var(--lumiverse-radius); background: var(--lumiverse-fill-subtle); }
+    .lws-steplabel { display: flex; align-items: center; gap: 7px;
+      font-size: 11px; letter-spacing: .06em; text-transform: uppercase;
+      color: var(--lumiverse-text-dim, var(--lumiverse-text-muted)); }
+    .lws-steplabel b { display: inline-flex; align-items: center; justify-content: center;
+      width: 17px; height: 17px; border-radius: 50%; font-size: 10.5px;
+      background: var(--lumiverse-accent, var(--lumiverse-fill)); color: var(--lumiverse-text); }
+    .lws-nav { margin-left: auto; display: flex; align-items: center; gap: 4px;
+      text-transform: none; letter-spacing: 0; }
+    .lws-btn.lws-mini { padding: 3px 8px; font-size: 12px; line-height: 1.2; }
+    #lws-text { min-height: 150px; font-size: 12px; line-height: 1.45; }
+    #lws-target { width: 84px; }
+    .lws-step small { font-size: 11px; }
+    .lws-step small.lws-ok { color: var(--lumiverse-success, #6fcf8e); }
+    .lws-step small.lws-info { opacity: .65; }
+    .lws-step .lws-opts { border-top: 1px solid var(--lumiverse-border); }
     .lws-preview { display: flex; flex-direction: column; gap: 6px;
       padding: 9px; border: 1px solid var(--lumiverse-border);
       border-radius: var(--lumiverse-radius); background: var(--lumiverse-fill-subtle); }
@@ -339,84 +357,75 @@ export function setup(ctx) {
       <button class="lws-btn" data-act="diag">Check setup</button>
       <button class="lws-btn" data-act="clear">Clear</button>
     </div>
-    <div class="lws-status" id="lws-status">Starting up…</div>
+    <div class="lws-status" id="lws-status">Ready.</div>
 
-    <p class="lws-lede">Each page becomes one entry. Text is extracted in your browser — no model is called.</p>
+    <div class="lws-step">
+      <div class="lws-steplabel"><b>1</b> Fetch</div>
+      <textarea id="lws-urls" rows="2" placeholder="One URL per line"></textarea>
+      <button class="lws-btn lws-btn-primary" data-act="fetch">Fetch pages</button>
+    </div>
 
-    <div class="lws-field">
-      <label for="lws-book">Lorebook</label>
-      <div class="lws-inline">
-        <select id="lws-book"></select>
-        <button class="lws-btn" data-act="refresh" title="Reload the list">↻</button>
+    <div class="lws-step" id="lws-workspace" style="display:none;">
+      <div class="lws-steplabel">
+        <b>2</b> Review &amp; condense
+        <span class="lws-nav">
+          <button class="lws-btn lws-mini" data-act="prev">‹</button>
+          <span id="lws-pos">1 / 1</span>
+          <button class="lws-btn lws-mini" data-act="next">›</button>
+        </span>
       </div>
-    </div>
 
-    <div class="lws-field">
-      <label for="lws-new">Or make a new one</label>
-      <div class="lws-inline">
-        <input id="lws-new" placeholder="New lorebook name" />
-        <button class="lws-btn" data-act="create">Create</button>
-      </div>
-    </div>
+      <input id="lws-title" placeholder="Entry title" />
+      <textarea id="lws-text" rows="10" placeholder="Fetched text appears here"></textarea>
+      <small id="lws-meta"></small>
 
-    <div class="lws-field">
-      <label for="lws-urls">Page URLs, one per line</label>
-      <textarea id="lws-urls" placeholder="https://outlast.fandom.com/wiki/Easterman"></textarea>
-    </div>
-
-    <div class="lws-field">
-      <label for="lws-conn">Condenser model (leave as Default to use your chat connection)</label>
+      <input id="lws-focus" placeholder="Condenser focus, optional — e.g. techniques and mechanisms" />
       <div class="lws-inline">
         <select id="lws-conn"></select>
-        <button class="lws-btn" data-act="refreshConn" title="Reload connections">↻</button>
+        <button class="lws-btn lws-mini" data-act="refreshConn" title="Reload connections">↻</button>
+      </div>
+      <div class="lws-inline">
+        <input type="number" id="lws-target" min="50" step="25" value="250" />
+        <button class="lws-btn lws-btn-primary" data-act="condense">Condense</button>
+        <button class="lws-btn" data-act="revert">Revert</button>
       </div>
     </div>
 
-    <div class="lws-field">
-      <label for="lws-focus">Condenser focus (optional)</label>
-      <input id="lws-focus" placeholder="e.g. techniques and psychological mechanisms" />
-    </div>
-
-    <button class="lws-btn lws-btn-primary" data-act="scrape">Scrape into lorebook</button>
-
-    <div class="lws-preview" id="lws-preview" style="display:none;">
-      <div class="lws-statusbar">
-        <span id="lws-preview-label">Condensed result</span>
-        <button class="lws-btn" data-act="savePreview">Save edits</button>
-        <button class="lws-btn" data-act="hidePreview">Hide</button>
+    <div class="lws-step" id="lws-sendstep" style="display:none;">
+      <div class="lws-steplabel"><b>3</b> Save</div>
+      <div class="lws-inline">
+        <select id="lws-book"></select>
+        <button class="lws-btn lws-mini" data-act="refreshBooks" title="Reload lorebooks">↻</button>
       </div>
-      <textarea id="lws-preview-text" rows="8"></textarea>
-      <small id="lws-preview-meta"></small>
-    </div>
-
-    <div class="lws-opts">
-      <label><input type="checkbox" data-opt="condense"> Condense with a model into a short entry</label>
-      <div class="lws-num"><input type="number" data-opt="condenseTokens" min="50" step="25" value="150"> target tokens when condensing</div>
-      <label><input type="checkbox" data-opt="headings" checked> Keep headings as markdown</label>
-      <label><input type="checkbox" data-opt="tables" checked> Keep tables</label>
-      <label><input type="checkbox" data-opt="source" checked> Record the source URL in the entry</label>
-      <label><input type="checkbox" data-opt="autokeys" checked> Fill keywords from the page title</label>
-      <label><input type="checkbox" data-opt="vectorize"> Vectorize new entries (semantic activation)</label>
-      <label><input type="checkbox" data-opt="constant"> Make entries always active</label>
-      <label><input type="checkbox" data-opt="disabled"> Create disabled so I can review them</label>
-      <label><input type="checkbox" data-opt="split"> Split long pages at each H2</label>
-      <div class="lws-num"><input type="number" data-opt="max" min="0" step="500" value="0"> character cap per entry (0 = none)</div>
+      <div class="lws-inline">
+        <input id="lws-new" placeholder="Or new lorebook name" />
+        <button class="lws-btn lws-mini" data-act="create">Create</button>
+      </div>
+      <div class="lws-inline">
+        <button class="lws-btn lws-btn-primary" data-act="send">Save this entry</button>
+        <button class="lws-btn" data-act="discard">Discard</button>
+      </div>
+      <div class="lws-opts">
+        <label><input type="checkbox" data-opt="autokeys" checked> Keywords from title</label>
+        <label><input type="checkbox" data-opt="vectorize"> Vectorized</label>
+        <label><input type="checkbox" data-opt="constant"> Always active</label>
+        <label><input type="checkbox" data-opt="disabled"> Create disabled</label>
+        <label><input type="checkbox" data-opt="source" checked> Record source URL</label>
+        <label><input type="checkbox" data-opt="headings" checked> Keep headings</label>
+        <label><input type="checkbox" data-opt="tables" checked> Keep tables</label>
+      </div>
     </div>
   `;
   tab.root.appendChild(wrap);
 
-  const bookSelect = wrap.querySelector('#lws-book');
-  const newBookInput = wrap.querySelector('#lws-new');
-  const urlInput = wrap.querySelector('#lws-urls');
   const statusBox = wrap.querySelector('#lws-status');
-  const scrapeBtn = wrap.querySelector('[data-act="scrape"]');
+  const $ = (sel) => wrap.querySelector(sel);
 
-  // Classify a status line by its wording so it can be coloured.
   function classifyLine(text) {
     const t = text.trim();
-    if (/^—.*—$/.test(t) || /^— /.test(t)) return 'lws-head';
-    if (/\b(failed|error|could not|couldn't|no answer|not available|rejected|missing|denied)\b/i.test(t)) return 'lws-err';
-    if (/\b(done|added|created|found|loaded|written|updated|condensed|succeeded|finished|ready)\b/i.test(t)) return 'lws-ok';
+    if (/^— /.test(t)) return 'lws-head';
+    if (/\b(failed|error|could not|couldn't|no answer|not available|rejected|missing|denied|discarded)\b/i.test(t)) return 'lws-err';
+    if (/\b(done|added|saved|created|found|loaded|written|updated|condensed|fetched|ready)\b/i.test(t)) return 'lws-ok';
     return 'lws-info';
   }
 
@@ -428,244 +437,272 @@ export function setup(ctx) {
     box.scrollTop = box.scrollHeight;
   }
 
-  const previewBox = wrap.querySelector('#lws-preview');
-  const previewText = wrap.querySelector('#lws-preview-text');
-  const previewLabel = wrap.querySelector('#lws-preview-label');
-  const previewMeta = wrap.querySelector('#lws-preview-meta');
-  let previewEntryId = null;
-
-  function showPreview(title, text, entryId, wasCondensed) {
-    previewEntryId = entryId || null;
-    previewLabel.textContent = wasCondensed ? 'Condensed result' : 'Entry text (not condensed)';
-    previewText.value = text;
-    previewMeta.textContent = `${title} · ${text.length} characters${wasCondensed ? '' : ' · condensing did not run'}`;
-    previewBox.style.display = 'flex';
-  }
-
-  wrap.querySelector('[data-act="hidePreview"]').addEventListener('click', () => {
-    previewBox.style.display = 'none';
-  });
-
-  wrap.querySelector('[data-act="savePreview"]').addEventListener('click', async () => {
-    if (!previewEntryId) { log('No entry to update — nothing was created for this preview.'); return; }
-    try {
-      await call('lws:update_entry', { entryId: previewEntryId, patch: { content: previewText.value } }, 30000);
-      log('Entry updated with your edits.');
-    } catch (err) {
-      log(`Could not save edits: ${err.message}`);
-    }
-  });
-
   let firstLine = true;
-  function log(message) {
+  function log(msg) {
     if (firstLine) { statusBox.textContent = ''; firstLine = false; }
-    appendLine(statusBox, message);
+    appendLine(statusBox, msg);
   }
 
-  function options() {
-    const read = (name) => wrap.querySelector(`[data-opt="${name}"]`).checked;
-    return {
-      condense: read('condense'),
-      focus: wrap.querySelector('#lws-focus').value.trim(),
-      condenseTokens: Number(wrap.querySelector('[data-opt="condenseTokens"]').value) || 150,
-      headings: read('headings'),
-      tables: read('tables'),
-      source: read('source'),
-      autokeys: read('autokeys'),
-      vectorize: read('vectorize'),
-      constant: read('constant'),
-      disabled: read('disabled'),
-      split: read('split'),
-      max: Number(wrap.querySelector('[data-opt="max"]').value) || 0,
-    };
+  const opt = (name) => $(`[data-opt="${name}"]`).checked;
+
+  /* ---- page queue ---- */
+  let pages = [];      // { url, title, original, text, condensed }
+  let index = 0;
+
+  const workspace = $('#lws-workspace');
+  const sendStep = $('#lws-sendstep');
+  const titleInput = $('#lws-title');
+  const textArea = $('#lws-text');
+  const metaLine = $('#lws-meta');
+  const posLabel = $('#lws-pos');
+  const connSelect = $('#lws-conn');
+  const bookSelect = $('#lws-book');
+
+  function syncFromInputs() {
+    const page = pages[index];
+    if (!page) return;
+    page.title = titleInput.value;
+    page.text = textArea.value;
   }
 
-  async function loadBooks(selectId) {
-    try {
-      const result = await call('lws:list_books', {}, 25000);
-      const books = result.books || [];
-      bookSelect.innerHTML = '';
-
-      if (!books.length) {
-        const option = document.createElement('option');
-        option.value = '';
-        option.textContent = 'No lorebooks found';
-        bookSelect.appendChild(option);
-        log(`The host returned 0 lorebooks (response fields: ${result.rawShape}, reported total: ${result.total}). If you do have lorebooks, press Check setup.`);
-        return;
-      }
-
-      for (const book of books) {
-        const option = document.createElement('option');
-        option.value = book.id;
-        option.textContent = book.name;
-        bookSelect.appendChild(option);
-      }
-      if (selectId) bookSelect.value = selectId;
-      log(`Found ${books.length} ${books.length === 1 ? 'lorebook' : 'lorebooks'}.`);
-    } catch (err) {
-      log(err.message);
+  function render() {
+    const page = pages[index];
+    if (!page) {
+      workspace.style.display = 'none';
+      sendStep.style.display = 'none';
+      return;
     }
+    workspace.style.display = 'flex';
+    sendStep.style.display = 'flex';
+    titleInput.value = page.title;
+    textArea.value = page.text;
+    posLabel.textContent = `${index + 1} / ${pages.length}`;
+    const shrunk = page.condensed
+      ? ` · condensed from ${page.original.length}`
+      : ' · not condensed';
+    metaLine.textContent = `${page.text.length} characters${shrunk}`;
+    metaLine.className = page.condensed ? 'lws-ok' : 'lws-info';
   }
 
-  async function diagnose() {
-    try {
-      const d = await call('lws:diag', {}, 25000);
-      log('— Setup check —');
-      log(`Frontend 1.16 · Backend ${d.backendVersion || 'older than 1.16 — it did not reload'}`);
-      log(`spindle.generate is: ${d.generateType || '?'} · methods: ${d.generateMethods || '?'}`);
-      log(`User ID: ${d.userId || 'this backend is too old to report it — the update did not take'}`);
-      log(`Call shapes learned: ${d.shapes || 'n/a'}`);
-      log(`Permissions granted by host: ${d.granted && d.granted.length ? d.granted.join(', ') : '(none)'}`);
-      log(`world_books cached as granted: ${d.cachedWorldBooks}`);
-      log(`cors_proxy cached as granted: ${d.cachedCors}`);
-      log(`spindle.world_books is: ${d.worldBooksApi} / .entries is: ${d.entriesApi}`);
-      log(`spindle.cors is: ${d.corsApi}`);
-      log(`Available spindle APIs: ${d.spindleKeys}`);
-    } catch (err) {
-      log(err.message);
-    }
-  }
+  titleInput.addEventListener('input', syncFromInputs);
+  textArea.addEventListener('input', () => { syncFromInputs(); render(); });
 
-  wrap.querySelector('[data-act="refresh"]').addEventListener('click', () => loadBooks(bookSelect.value));
-  wrap.querySelector('[data-act="diag"]').addEventListener('click', diagnose);
-  wrap.querySelector('[data-act="clear"]').addEventListener('click', () => {
+  $('[data-act="prev"]').addEventListener('click', () => {
+    syncFromInputs();
+    if (index > 0) { index--; render(); }
+  });
+  $('[data-act="next"]').addEventListener('click', () => {
+    syncFromInputs();
+    if (index < pages.length - 1) { index++; render(); }
+  });
+
+  $('[data-act="clear"]').addEventListener('click', () => {
     statusBox.textContent = '';
     firstLine = false;
   });
 
-  wrap.querySelector('[data-act="create"]').addEventListener('click', async (event) => {
-    const button = event.currentTarget;
-    const name = newBookInput.value.trim();
-    if (!name) { log('Type a name for the new lorebook first.'); return; }
-    button.disabled = true;
-    try {
-      const result = await call('lws:create_book', { name }, 25000);
-      newBookInput.value = '';
-      log(`Created lorebook "${name}".`);
-      await loadBooks(result.book && result.book.id);
-    } catch (err) {
-      log(err.message);
-    } finally {
-      button.disabled = false;
-    }
-  });
-
-  scrapeBtn.addEventListener('click', async () => {
-    const urls = urlInput.value.split(/\s+/).map((u) => u.trim()).filter((u) => /^https?:\/\//i.test(u));
-    const bookId = bookSelect.value;
-
+  /* ---- step 1: fetch ---- */
+  $('[data-act="fetch"]').addEventListener('click', async (e) => {
+    const button = e.currentTarget;
+    const urls = $('#lws-urls').value.split(/\s+/)
+      .map((u) => u.trim()).filter((u) => /^https?:\/\//i.test(u));
     if (!urls.length) { log('Paste at least one URL beginning with http:// or https://'); return; }
-    if (!bookId) { log('Choose a lorebook, or create one above.'); return; }
 
-    const opts = options();
-    scrapeBtn.disabled = true;
-    scrapeBtn.textContent = 'Scraping…';
-    let added = 0;
+    button.disabled = true;
+    button.textContent = 'Fetching…';
+    const extractOpts = { headings: opt('headings'), tables: opt('tables') };
+    const fetched = [];
 
     for (const url of urls) {
       try {
         log(`Fetching ${url}`);
-        const fetched = await call('lws:fetch', { url }, 60000);
-        const { title, body } = extract(fetched.html, opts);
-        if (!body) { log('  nothing readable on that page'); continue; }
-
-        const pieces = opts.split ? splitSections(title || url, body) : [{ title: title || url, body }];
-
-        for (const piece of pieces) {
-          let content = piece.body;
-
-          let wasCondensed = false;
-          if (opts.condense) {
-            try {
-              log(`  condensing "${piece.title}" (${content.length} chars)…`);
-              const result = await call('lws:condense', {
-                text: content,
-                title: piece.title,
-                targetTokens: opts.condenseTokens,
-                focus: opts.focus || undefined,
-                connectionId: connSelect.value || undefined,
-              }, 180000);
-              content = result.text;
-              wasCondensed = true;
-              log(`  condensed to ${content.length} chars`);
-            } catch (err) {
-              log(`  CONDENSING FAILED — saved the full article instead. Error: ${err.message}`);
-            }
-          }
-
-          if (opts.max > 0 && content.length > opts.max) {
-            content = `${content.slice(0, opts.max).replace(/\s\S*$/, '')}\n\n[truncated]`;
-          }
-          if (opts.source) content = `Source: ${url}\n\n${content}`;
-
-          const created = await call('lws:create_entry', {
-            bookId,
-            entry: {
-              key: opts.autokeys ? keysFromTitle(piece.title) : [],
-              keysecondary: [],
-              content,
-              comment: piece.title,
-              position: 0,
-              depth: 4,
-              order_value: 100,
-              selective: false,
-              vectorized: opts.vectorize,
-              constant: opts.constant,
-              disabled: opts.disabled,
-              probability: 100,
-              use_probability: true,
-              use_regex: false,
-              case_sensitive: false,
-              match_whole_words: false,
-            },
-          }, 30000);
-
-          added++;
-          log(`  added "${piece.title}" (${content.length} characters)`);
-          showPreview(piece.title, content, created && created.id, wasCondensed);
-        }
+        const res = await call('lws:fetch', { url }, 60000);
+        const { title, body } = extract(res.html, extractOpts);
+        if (!body) { log(`  nothing readable at ${url}`); continue; }
+        fetched.push({ url, title: title || url, original: body, text: body, condensed: false });
+        log(`  fetched "${title || url}" (${body.length} characters)`);
       } catch (err) {
         log(`  failed — ${err.message}`);
       }
     }
 
-    scrapeBtn.disabled = false;
-    scrapeBtn.textContent = 'Scrape into lorebook';
-    log(added ? `Done. ${added} ${added === 1 ? 'entry' : 'entries'} written.` : 'Nothing was written.');
-    if (added) urlInput.value = '';
+    if (fetched.length) {
+      pages = fetched;
+      index = 0;
+      render();
+      log(`Ready to review ${fetched.length} page${fetched.length === 1 ? '' : 's'}. Nothing has been saved yet.`);
+    }
+
+    button.disabled = false;
+    button.textContent = 'Fetch pages';
   });
 
-  const connSelect = wrap.querySelector('#lws-conn');
+  /* ---- step 2: condense ---- */
+  $('[data-act="condense"]').addEventListener('click', async (e) => {
+    syncFromInputs();
+    const page = pages[index];
+    if (!page) return;
+    const button = e.currentTarget;
+    button.disabled = true;
+    button.textContent = 'Condensing…';
+    try {
+      log(`Condensing "${page.title}" (${page.text.length} chars)…`);
+      const res = await call('lws:condense', {
+        text: page.text,
+        title: page.title,
+        targetTokens: Number($('#lws-target').value) || 250,
+        focus: $('#lws-focus').value.trim() || undefined,
+        connectionId: connSelect.value || undefined,
+      }, 180000);
+      page.text = res.text;
+      page.condensed = true;
+      render();
+      log(`Condensed to ${res.text.length} characters.`);
+    } catch (err) {
+      log(`Condensing failed — ${err.message}`);
+    }
+    button.disabled = false;
+    button.textContent = 'Condense';
+  });
+
+  $('[data-act="revert"]').addEventListener('click', () => {
+    const page = pages[index];
+    if (!page) return;
+    page.text = page.original;
+    page.condensed = false;
+    render();
+    log('Reverted to the original fetched text.');
+  });
+
+  /* ---- step 3: save ---- */
+  $('[data-act="send"]').addEventListener('click', async (e) => {
+    syncFromInputs();
+    const page = pages[index];
+    const bookId = bookSelect.value;
+    if (!page) return;
+    if (!bookId) { log('Choose a lorebook first.'); return; }
+
+    const button = e.currentTarget;
+    button.disabled = true;
+    let content = page.text;
+    if (opt('source')) content = `Source: ${page.url}\n\n${content}`;
+
+    try {
+      await call('lws:create_entry', {
+        bookId,
+        entry: {
+          key: opt('autokeys') ? keysFromTitle(page.title) : [],
+          keysecondary: [],
+          content,
+          comment: page.title,
+          position: 0,
+          depth: 4,
+          order_value: 100,
+          selective: false,
+          vectorized: opt('vectorize'),
+          constant: opt('constant'),
+          disabled: opt('disabled'),
+          probability: 100,
+          use_probability: true,
+          use_regex: false,
+          case_sensitive: false,
+          match_whole_words: false,
+        },
+      }, 30000);
+
+      log(`Saved "${page.title}" (${content.length} characters).`);
+      pages.splice(index, 1);
+      if (index >= pages.length) index = Math.max(0, pages.length - 1);
+      render();
+      if (!pages.length) log('All pages handled.');
+    } catch (err) {
+      log(`Could not save — ${err.message}`);
+    }
+    button.disabled = false;
+  });
+
+  $('[data-act="discard"]').addEventListener('click', () => {
+    const page = pages[index];
+    if (!page) return;
+    log(`Discarded "${page.title}" — not saved.`);
+    pages.splice(index, 1);
+    if (index >= pages.length) index = Math.max(0, pages.length - 1);
+    render();
+  });
+
+  /* ---- lorebooks & connections ---- */
+  async function loadBooks(selectId) {
+    try {
+      const result = await call('lws:list_books', {}, 25000);
+      bookSelect.innerHTML = '';
+      const books = result.books || [];
+      if (!books.length) {
+        const o = document.createElement('option');
+        o.value = ''; o.textContent = 'No lorebooks found';
+        bookSelect.appendChild(o);
+        return;
+      }
+      for (const book of books) {
+        const o = document.createElement('option');
+        o.value = book.id; o.textContent = book.name;
+        bookSelect.appendChild(o);
+      }
+      if (selectId) bookSelect.value = selectId;
+      log(`Found ${books.length} lorebooks.`);
+    } catch (err) {
+      log(err.message);
+    }
+  }
 
   async function loadConnections() {
     connSelect.innerHTML = '';
     const fallback = document.createElement('option');
-    fallback.value = '';
-    fallback.textContent = 'Default (your chat connection)';
+    fallback.value = ''; fallback.textContent = 'Default connection';
     connSelect.appendChild(fallback);
-
     try {
       const result = await call('lws:list_connections', {}, 20000);
       for (const conn of result.connections || []) {
-        const option = document.createElement('option');
-        option.value = conn.id;
-        option.textContent = conn.model ? `${conn.name} — ${conn.model}` : conn.name;
-        connSelect.appendChild(option);
+        const o = document.createElement('option');
+        o.value = conn.id;
+        o.textContent = conn.model ? `${conn.name} — ${conn.model}` : conn.name;
+        connSelect.appendChild(o);
       }
-      if (!(result.connections || []).length && result.note) {
-        log(`Connections: ${result.note}`);
-        if (result.detail) log(`  tried: ${result.detail}`);
-        if (result.rawKeys) log(`  result was: ${result.rawKeys}`);
-      } else if ((result.connections || []).length) {
-        log(`Found ${result.connections.length} connection(s).`);
-      }
+      if ((result.connections || []).length) log(`Found ${result.connections.length} connections.`);
+      else if (result.note) log(`Connections: ${result.note}`);
     } catch (err) {
-      log(`Could not list connections (${err.message}). Condensing will use your default connection.`);
+      log(`Could not list connections: ${err.message}`);
     }
   }
 
-  wrap.querySelector('[data-act="refreshConn"]').addEventListener('click', loadConnections);
+  $('[data-act="refreshBooks"]').addEventListener('click', () => loadBooks(bookSelect.value));
+  $('[data-act="refreshConn"]').addEventListener('click', loadConnections);
+
+  $('[data-act="create"]').addEventListener('click', async () => {
+    const name = $('#lws-new').value.trim();
+    if (!name) { log('Type a name for the new lorebook first.'); return; }
+    try {
+      const result = await call('lws:create_book', { name }, 25000);
+      $('#lws-new').value = '';
+      log(`Created lorebook "${name}".`);
+      await loadBooks(result.book && result.book.id);
+    } catch (err) {
+      log(err.message);
+    }
+  });
+
+  async function diagnose() {
+    try {
+      const d = await call('lws:diag', {}, 25000);
+      log('— Setup check —');
+      log(`Frontend 2.0 · Backend ${d.backendVersion || 'older — it did not reload'}`);
+      log(`generate: ${d.generateType} · ${d.generateMethods}`);
+      log(`User ID: ${d.userId}`);
+      log(`Granted: ${(d.granted || []).join(', ') || '(none)'}`);
+    } catch (err) {
+      log(err.message);
+    }
+  }
+  $('[data-act="diag"]').addEventListener('click', diagnose);
 
   loadBooks();
   loadConnections();
