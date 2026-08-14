@@ -382,7 +382,13 @@ export function setup(ctx) {
       <textarea id="lws-text" rows="10" placeholder="Fetched text appears here"></textarea>
       <small id="lws-meta"></small>
 
-      <input id="lws-focus" placeholder="Condenser focus, optional — e.g. techniques and mechanisms" />
+      <input id="lws-focus" placeholder="Focus, optional — e.g. techniques and mechanisms" />
+      <div class="lws-inline">
+        <select id="lws-focusmode">
+          <option value="prioritise">Mostly this, some context</option>
+          <option value="only">Only this, ignore the rest</option>
+        </select>
+      </div>
       <div class="lws-inline">
         <select id="lws-conn"></select>
         <button class="lws-btn lws-mini" data-act="refreshConn" title="Reload connections">↻</button>
@@ -494,6 +500,16 @@ export function setup(ctx) {
     if (hard < aim) $('#lws-hard').value = Math.ceil(aim * 1.25);
   });
 
+  const focusInput = $('#lws-focus');
+  const focusMode = $('#lws-focusmode');
+  function syncFocusMode() {
+    const on = !!focusInput.value.trim();
+    focusMode.disabled = !on;
+    focusMode.style.opacity = on ? '1' : '0.45';
+  }
+  focusInput.addEventListener('input', syncFocusMode);
+  syncFocusMode();
+
   titleInput.addEventListener('input', syncFromInputs);
   textArea.addEventListener('input', () => { syncFromInputs(); render(); });
 
@@ -563,6 +579,7 @@ export function setup(ctx) {
         targetTokens: Number($('#lws-target').value) || 250,
         hardLimit: Number($('#lws-hard').value) || undefined,
         focus: $('#lws-focus').value.trim() || undefined,
+        focusMode: $('#lws-focusmode').value,
         connectionId: connSelect.value || undefined,
       }, 180000);
       page.text = res.text;
@@ -711,7 +728,7 @@ export function setup(ctx) {
     try {
       const d = await call('lws:diag', {}, 25000);
       log('— Setup check —');
-      log(`Frontend 2.2 · Backend ${d.backendVersion || 'older — it did not reload'}`);
+      log(`Frontend 2.3 · Backend ${d.backendVersion || 'older — it did not reload'}`);
       log(`generate: ${d.generateType} · ${d.generateMethods}`);
       log(`User ID: ${d.userId}`);
       log(`Granted: ${(d.granted || []).join(', ') || '(none)'}`);
