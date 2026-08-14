@@ -77,6 +77,30 @@ function asBookList(result) {
   return [];
 }
 
+/** Count tokens via the host if possible, else estimate from characters. */
+async function countTokens(text, userId) {
+  const t = spindle.tokens;
+  if (t) {
+    const tries = [
+      () => t.count({ text, userId }),
+      () => t.count(text, userId),
+      () => t.count({ content: text, userId }),
+    ];
+    for (const run of tries) {
+      try {
+        const r = await run();
+        const n = typeof r === 'number' ? r
+          : r && typeof r.count === 'number' ? r.count
+          : r && typeof r.tokens === 'number' ? r.tokens
+          : Array.isArray(r) ? r.length
+          : null;
+        if (typeof n === 'number' && n > 0) return { tokens: n, exact: true };
+      } catch (e) { /* try the next shape */ }
+    }
+  }
+  return { tokens: Math.ceil(text.length / 4), exact: false };
+}
+
 async function grantedList() {
   try {
     const granted = await spindle.permissions.getGranted();
@@ -136,7 +160,7 @@ spindle.onFrontendMessage(async (payload, handlerUserId) => {
 
         return reply({
           type: 'lws:diag_result',
-          backendVersion: '2.1.0',
+          backendVersion: '2.2.0',
           generateType: typeof spindle.generate,
           generateMethods: (spindle.generate && typeof spindle.generate === 'object')
             ? Object.keys(spindle.generate).filter((k) => typeof spindle.generate[k] === 'function').join(', ')
@@ -372,24 +396,28 @@ spindle.onFrontendMessage(async (payload, handlerUserId) => {
         const focus = String(payload.focus || '').trim();
         if (!text) return fail('Nothing to condense.');
 
+        const hardLimit = Number(payload.hardLimit) || Math.ceil(targetTokens * 1.25);
+        const aimWords = Math.round(targetTokens * 0.72);
+        const maxWords = Math.round(hardLimit * 0.72);
+
         const focusLine = focus
-          ? `Prioritise material about: ${focus}. Include other content only if it directly supports that.`
+          ? `Prioritise material about: ${focus}. Include other content only where it directly supports that.`
           : 'Prioritise the most substantive, reusable material: what the subject is, how it works, and its defining details.';
 
         const prompt = [
-          `You are compressing a reference article into a lorebook entry about ${title}.`,
+          `Compress the reference article below into a lorebook entry about ${title}.`,
           '',
-          'Read the whole article first, then select and rewrite only what matters.',
-          `Hard limit: about ${targetTokens} tokens (roughly ${Math.round(targetTokens * 0.72)} words).`,
-          'Never simply truncate. Never stop mid-sentence. Choose what to keep, then write it out complete.',
+          `LENGTH IS THE PRIMARY CONSTRAINT. Aim for ${aimWords} words. Never exceed ${maxWords} words.`,
+          'Count as you write. If you are running long, cut detail rather than running over.',
+          'Select what matters, then write it out complete. Never truncate. Never stop mid-sentence.',
           '',
           focusLine,
           '',
           'Rules:',
           '- Flowing prose, neutral encyclopedic register. No headings, no bullets, no markdown.',
           '- Keep concrete specifics: named techniques, mechanisms, terminology, cause and effect.',
-          '- Remove citation markers, footnote numbers, "see also", navigation text, and publication details.',
-          '- Remove who studied it, when it was published, and where. Keep only what the thing IS and how it works.',
+          '- Remove citations, footnote numbers, see-also lists, navigation text and publication details.',
+          '- Remove who studied it, when and where it was published. Keep only what it IS and how it works.',
           '- Do not address the reader. Do not mention the article, the source, or that this is a summary.',
           '- Output only the entry text: no preamble, no title, no closing remark.',
           '',
@@ -399,7 +427,7 @@ spindle.onFrontendMessage(async (payload, handlerUserId) => {
           '"""',
         ].join('\n');
 
-        const maxTokens = Math.max(1024, Math.ceil(targetTokens * 3));
+        const maxTokens = Math.max(512, Math.ceil(hardLimit * 1.6));
         const base = { messages: [{ role: 'user', content: prompt }], maxTokens, temperature: 0.3, userId };
 
         // The winning call shape is generate.quiet({ ...body, userId }). What it still
@@ -471,7 +499,73 @@ spindle.onFrontendMessage(async (payload, handlerUserId) => {
         }
 
         spindle.log.info(`Lorebook Web Scraper: condense worked via ${usedShape}`);
-        return reply({ type: 'lws:condensed', text: condensed, shape: usedShape, originalLength: text.length });
+
+        // Models drift long. If the result overshoots the ceiling, ask it to tighten
+        // rather than truncating, so sentences stay whole.
+        const methodName = usedShape.split('(')[0];
+        const keyMatch = usedShape.match(/, (\w+)\}/);
+        const connKey = keyMatch ? keyMatch[1] : 'connectionId';
+
+        const runGen = async (msgs, cap) => {
+          const bodyObj = { ...base, messages: msgs, maxTokens: cap };
+          if (chosenConnection) bodyObj[connKey] = chosenConnection;
+          const r = await gen[methodName](bodyObj);
+          return (
+            typeof r === 'string' ? r
+            : r && typeof r.text === 'string' ? r.text
+            : r && typeof r.content === 'string' ? r.content
+            : r && typeof r.output === 'string' ? r.output
+            : r && r.message && typeof r.message.content === 'string' ? r.message.content
+            : r && Array.isArray(r.content) ? partsToText(r.content)
+            : ''
+          ).trim();
+        };
+
+        let finalText = condensed;
+        let measured = await countTokens(finalText, userId);
+        let passes = 0;
+
+        while (measured.tokens > hardLimit && passes < 2) {
+          passes++;
+          const over = measured.tokens - hardLimit;
+          const tightenPrompt = [
+            `The note below is ${measured.tokens} tokens. It must be at most ${hardLimit} tokens`,
+            `(about ${maxWords} words). Cut roughly ${over} tokens.`,
+            '',
+            'Remove the least essential detail, redundancy, and repeated framing.',
+            'Keep the core definition, mechanisms, and terminology.',
+            'Return complete sentences only. Do not truncate. Output only the shortened note.',
+            '',
+            '"""',
+            finalText,
+            '"""',
+          ].join('\n');
+
+          try {
+            const tightened = await runGen(
+              [{ role: 'user', content: tightenPrompt }],
+              Math.max(512, Math.ceil(hardLimit * 1.4)),
+            );
+            if (!tightened) break;
+            finalText = tightened;
+            measured = await countTokens(finalText, userId);
+            spindle.log.info(`Lorebook Web Scraper: tighten pass ${passes} gave ${measured.tokens} tokens`);
+          } catch (err) {
+            spindle.log.error(`Lorebook Web Scraper: tighten pass failed - ${message(err)}`);
+            break;
+          }
+        }
+
+        return reply({
+          type: 'lws:condensed',
+          text: finalText,
+          shape: usedShape,
+          originalLength: text.length,
+          tokens: measured.tokens,
+          exactTokens: measured.exact,
+          hardLimit,
+          passes,
+        });
       }
 
 

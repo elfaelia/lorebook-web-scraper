@@ -325,6 +325,9 @@ export function setup(ctx) {
     #lws-text { min-height: 150px; font-size: 12px; line-height: 1.45; }
     #lws-target { width: 84px; }
     .lws-step small { font-size: 11px; }
+    .lws-num2 { display: flex; align-items: center; gap: 4px; font-size: 11px;
+      color: var(--lumiverse-text-dim, var(--lumiverse-text-muted)); }
+    .lws-num2 input { width: 70px; }
     .lws-step small.lws-ok { color: var(--lumiverse-success, #6fcf8e); }
     .lws-step small.lws-info { opacity: .65; }
     .lws-step .lws-opts { border-top: 1px solid var(--lumiverse-border); }
@@ -385,7 +388,8 @@ export function setup(ctx) {
         <button class="lws-btn lws-mini" data-act="refreshConn" title="Reload connections">↻</button>
       </div>
       <div class="lws-inline">
-        <input type="number" id="lws-target" min="50" step="25" value="250" />
+        <label class="lws-num2">aim<input type="number" id="lws-target" min="50" step="25" value="250" /></label>
+        <label class="lws-num2">max<input type="number" id="lws-hard" min="50" step="25" value="320" /></label>
         <button class="lws-btn lws-btn-primary" data-act="condense">Condense</button>
         <button class="lws-btn" data-act="revert">Revert</button>
       </div>
@@ -478,11 +482,17 @@ export function setup(ctx) {
     textArea.value = page.text;
     posLabel.textContent = `${index + 1} / ${pages.length}`;
     const shrunk = page.condensed
-      ? ` · condensed from ${page.original.length}`
+      ? ` · condensed from ${page.original.length}${page.tokens ? ` · ~${page.tokens} tokens` : ''}`
       : ' · not condensed';
     metaLine.textContent = `${page.text.length} characters${shrunk}`;
     metaLine.className = page.condensed ? 'lws-ok' : 'lws-info';
   }
+
+  $('#lws-target').addEventListener('change', () => {
+    const aim = Number($('#lws-target').value) || 250;
+    const hard = Number($('#lws-hard').value) || 0;
+    if (hard < aim) $('#lws-hard').value = Math.ceil(aim * 1.25);
+  });
 
   titleInput.addEventListener('input', syncFromInputs);
   textArea.addEventListener('input', () => { syncFromInputs(); render(); });
@@ -551,13 +561,20 @@ export function setup(ctx) {
         text: page.text,
         title: page.title,
         targetTokens: Number($('#lws-target').value) || 250,
+        hardLimit: Number($('#lws-hard').value) || undefined,
         focus: $('#lws-focus').value.trim() || undefined,
         connectionId: connSelect.value || undefined,
       }, 180000);
       page.text = res.text;
       page.condensed = true;
+      page.tokens = res.tokens;
       render();
-      log(`Condensed to ${res.text.length} characters${res.shape ? ` (via ${res.shape})` : ''}.`);
+      const tk = res.tokens ? `${res.tokens} tokens${res.exactTokens ? '' : ' est.'}` : `${res.text.length} chars`;
+      const tightened = res.passes ? `, tightened ${res.passes}x` : '';
+      log(`Condensed to ${tk} (limit ${res.hardLimit})${tightened}.`);
+      if (res.tokens && res.hardLimit && res.tokens > res.hardLimit) {
+        log(`Still over the limit — lower the aim or press Condense again.`);
+      }
     } catch (err) {
       log(`Condensing failed — ${err.message}`);
     }
@@ -694,7 +711,7 @@ export function setup(ctx) {
     try {
       const d = await call('lws:diag', {}, 25000);
       log('— Setup check —');
-      log(`Frontend 2.1 · Backend ${d.backendVersion || 'older — it did not reload'}`);
+      log(`Frontend 2.2 · Backend ${d.backendVersion || 'older — it did not reload'}`);
       log(`generate: ${d.generateType} · ${d.generateMethods}`);
       log(`User ID: ${d.userId}`);
       log(`Granted: ${(d.granted || []).join(', ') || '(none)'}`);
