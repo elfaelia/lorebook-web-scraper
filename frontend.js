@@ -728,7 +728,7 @@ export function setup(ctx) {
     try {
       const d = await call('lws:diag', {}, 25000);
       log('— Setup check —');
-      log(`Frontend 2.3 · Backend ${d.backendVersion || 'older — it did not reload'}`);
+      log(`Frontend 2.5 · Backend ${d.backendVersion || 'older — it did not reload'}`);
       log(`generate: ${d.generateType} · ${d.generateMethods}`);
       log(`User ID: ${d.userId}`);
       log(`Granted: ${(d.granted || []).join(', ') || '(none)'}`);
@@ -789,6 +789,21 @@ export function setup(ctx) {
       <label><input type="checkbox" data-vopt="skipConstant" checked> Leave always-active entries alone</label>
       <label><input type="checkbox" data-vopt="skipDisabled" checked> Leave disabled entries alone</label>
     </div>
+
+    <div class="lws-step">
+      <div class="lws-steplabel"><b>?</b> Field tools</div>
+      <small class="lws-info">Inspect shows every field on a real entry, so you can see which ranking controls this build actually has. Bulk set writes one field across a whole book — useful for priority or group.</small>
+      <button class="lws-btn" data-vact="inspect">Inspect entry fields</button>
+      <div class="lws-inline">
+        <input id="lwsv-field" placeholder="field name, e.g. priority" />
+        <input id="lwsv-value" placeholder="value" />
+      </div>
+      <div class="lws-inline">
+        <button class="lws-btn" data-vact="bulkSet">Bulk set on this book</button>
+        <label class="lws-num2"><input type="checkbox" id="lwsv-onlyvec" checked> vectorized only</label>
+      </div>
+    </div>
+
   `;
   vectorTab.root.appendChild(vWrap);
 
@@ -952,6 +967,51 @@ export function setup(ctx) {
       }
       return { key: merged };
     }, (e) => suggestions.has(e.id));
+  });
+
+
+
+  /* ---- field tools ---- */
+  vWrap.querySelector('[data-vact="inspect"]').addEventListener('click', async () => {
+    const bookId = vBookSelect.value;
+    if (!bookId) { vLog('Choose a lorebook first.'); return; }
+    try {
+      const res = await call('lws:inspect_entry', { bookId }, 30000);
+      vLog(`— Fields on "${res.comment}" —`);
+      for (const line of res.fields || []) vLog(`  ${line}`);
+    } catch (err) {
+      vLog(err.message);
+    }
+  });
+
+  vWrap.querySelector('[data-vact="bulkSet"]').addEventListener('click', async (e) => {
+    const bookId = vBookSelect.value;
+    const field = vWrap.querySelector('#lwsv-field').value.trim();
+    const rawValue = vWrap.querySelector('#lwsv-value').value.trim();
+    if (!bookId) { vLog('Choose a lorebook first.'); return; }
+    if (!field) { vLog('Type the field name to set. Use Inspect first if unsure.'); return; }
+
+    let value = rawValue;
+    if (rawValue === 'true') value = true;
+    else if (rawValue === 'false') value = false;
+    else if (rawValue === 'null') value = null;
+    else if (rawValue !== '' && !isNaN(Number(rawValue))) value = Number(rawValue);
+
+    const button = e.currentTarget;
+    button.disabled = true;
+    try {
+      const res = await call('lws:bulk_field', {
+        bookId,
+        field,
+        value,
+        onlyVectorized: vWrap.querySelector('#lwsv-onlyvec').checked,
+      }, 120000);
+      vLog(`Set ${field} = ${JSON.stringify(value)} on ${res.updated} of ${res.attempted} entries.`);
+      for (const f of res.failures || []) vLog(`  rejected: ${f}`);
+    } catch (err) {
+      vLog(err.message);
+    }
+    button.disabled = false;
   });
 
   vLoadBooks().then(vScan);

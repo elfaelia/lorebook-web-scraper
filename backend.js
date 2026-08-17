@@ -160,7 +160,7 @@ spindle.onFrontendMessage(async (payload, handlerUserId) => {
 
         return reply({
           type: 'lws:diag_result',
-          backendVersion: '2.2.0',
+          backendVersion: '2.3.0',
           generateType: typeof spindle.generate,
           generateMethods: (spindle.generate && typeof spindle.generate === 'object')
             ? Object.keys(spindle.generate).filter((k) => typeof spindle.generate[k] === 'function').join(', ')
@@ -400,18 +400,41 @@ spindle.onFrontendMessage(async (payload, handlerUserId) => {
         const aimWords = Math.round(targetTokens * 0.72);
         const maxWords = Math.round(hardLimit * 0.72);
 
-        const focusLine = focus
-          ? `Prioritise material about: ${focus}. Include other content only where it directly supports that.`
-          : 'Prioritise the most substantive, reusable material: what the subject is, how it works, and its defining details.';
+        const focusMode = String(payload.focusMode || 'prioritise');
+
+        let focusLine;
+        if (!focus) {
+          focusLine = [
+            'SCOPE: General overview.',
+            'Cover the subject broadly and proportionally: what it is, how it works, its main forms',
+            'and its defining details. Do not over-weight any single section of the article.',
+          ].join(' ');
+        } else if (focusMode === 'only') {
+          focusLine = [
+            `SCOPE: Restricted. Write about ONE thing only: ${focus}.`,
+            'This is not a summary of the article. Ignore every part of the source that does not',
+            `bear directly on ${focus}, however prominent it is in the original. Omit background,`,
+            'history, definitions of the wider subject, and adjacent topics entirely.',
+            `If the article covers ${focus} only briefly, write only that much — a short accurate`,
+            'entry is correct, padding it with general material is not.',
+          ].join(' ');
+        } else {
+          focusLine = [
+            `SCOPE: Weighted toward ${focus}.`,
+            `Spend most of the entry on ${focus}, in concrete detail. Include wider context only`,
+            'where it is needed to make that material intelligible, and keep it to a sentence or two.',
+            'Do not drift into a general summary of the whole subject.',
+          ].join(' ');
+        }
 
         const prompt = [
           `Compress the reference article below into a lorebook entry about ${title}.`,
           '',
-          `LENGTH IS THE PRIMARY CONSTRAINT. Aim for ${aimWords} words. Never exceed ${maxWords} words.`,
-          'Count as you write. If you are running long, cut detail rather than running over.',
-          'Select what matters, then write it out complete. Never truncate. Never stop mid-sentence.',
-          '',
           focusLine,
+          '',
+          `LENGTH: Aim for ${aimWords} words. Never exceed ${maxWords} words.`,
+          'Count as you write. If you are running long, cut the least relevant detail first.',
+          'Select what matters, then write it out complete. Never truncate. Never stop mid-sentence.',
           '',
           'Rules:',
           '- Flowing prose, neutral encyclopedic register. No headings, no bullets, no markdown.',
@@ -420,6 +443,8 @@ spindle.onFrontendMessage(async (payload, handlerUserId) => {
           '- Remove who studied it, when and where it was published. Keep only what it IS and how it works.',
           '- Do not address the reader. Do not mention the article, the source, or that this is a summary.',
           '- Output only the entry text: no preamble, no title, no closing remark.',
+          '',
+          focus ? `Reminder before you begin: ${focusMode === 'only' ? 'write only about' : 'centre the entry on'} ${focus}.` : '',
           '',
           'Article:',
           '"""',
@@ -569,6 +594,70 @@ spindle.onFrontendMessage(async (payload, handlerUserId) => {
       }
 
 
+      case 'lws:inspect_entry': {
+        const bookId = String(payload.bookId || '').trim();
+        if (!bookId) return fail('No lorebook selected.');
+
+        const res = await attempt('world_books.entries.list', [
+          ['options.userId', () => entries().list(bookId, { limit: 1, offset: 0, userId })],
+          ['third argument', () => entries().list(bookId, { limit: 1, offset: 0 }, userId)],
+        ]);
+        const rows = res && Array.isArray(res.data) ? res.data : Array.isArray(res) ? res : [];
+        if (!rows.length) return fail('That lorebook has no entries to inspect.');
+
+        const entry = rows[0];
+        const fields = Object.keys(entry).sort().map((k) => {
+          const v = entry[k];
+          let shown;
+          if (v === null) shown = 'null';
+          else if (Array.isArray(v)) shown = `[${v.length}]`;
+          else if (typeof v === 'object') shown = `{${Object.keys(v).join(',')}}`;
+          else if (typeof v === 'string') shown = v.length > 40 ? `"${v.slice(0, 40)}…"` : `"${v}"`;
+          else shown = String(v);
+          return `${k} = ${shown}`;
+        });
+
+        return reply({ type: 'lws:entry_schema', comment: entry.comment || '(no label)', fields });
+      }
+
+      case 'lws:bulk_field': {
+        const bookId = String(payload.bookId || '').trim();
+        const field = String(payload.field || '').trim();
+        if (!bookId || !field) return fail('Need a lorebook and a field name.');
+
+        const value = payload.value;
+        const onlyVectorized = !!payload.onlyVectorized;
+
+        const collected = [];
+        let offset = 0;
+        for (let page = 0; page < 20; page++) {
+          const res = await entries().list(bookId, { limit: 200, offset, userId });
+          const rows = res && Array.isArray(res.data) ? res.data : Array.isArray(res) ? res : [];
+          collected.push(...rows);
+          if (rows.length < 200) break;
+          offset += rows.length;
+        }
+
+        const targets = collected.filter((e) => e && e.id && (!onlyVectorized || e.vectorized));
+        let done = 0;
+        const failures = [];
+        for (const e of targets) {
+          try {
+            await entries().update(e.id, { [field]: value, userId });
+            done++;
+          } catch (err) {
+            if (failures.length < 3) failures.push(message(err));
+          }
+        }
+
+        return reply({
+          type: 'lws:bulk_done',
+          updated: done,
+          attempted: targets.length,
+          failures,
+        });
+      }
+
       default:
         return;
     }
@@ -675,5 +764,6 @@ spindle.registerInterceptor(async (messages, context) => {
     return messages;
   }
 }, 200);
+
 
 spindle.log.info('Lorebook Web Scraper backend ready (v2.0). Continue fix registered.');
