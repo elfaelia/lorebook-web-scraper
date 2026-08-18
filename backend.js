@@ -799,11 +799,18 @@ function continuationInstruction(fragment) {
     fragment,
     '</partial_reply>',
     '',
-    'Output only the continuation. Do not repeat any part of the text above, do not restate the',
-    'last sentence, and do not open with a summary, preamble, or acknowledgement. Your output will',
-    'be joined directly onto the end of that text, so begin with the exact next character —',
-    'including a leading space if one is needed, or the rest of the word if it stops mid-word.',
-    'Keep the same voice, tense, and formatting.',
+    'You are resuming a reply that is already in progress. You are NOT starting a new one.',
+    '',
+    'Do not open a new status block, info panel, header, tracker, stat line, date or time line,',
+    'location line, or any other structured block that normally begins one of your replies.',
+    'Those belong at the start of a reply and this reply already started. If the partial text above',
+    'already contains such a block, it has been written and must not be written again.',
+    '',
+    'Output only the continuation of the prose. Do not repeat any part of the text above, do not',
+    'restate the last sentence, and do not open with a summary, preamble, or acknowledgement.',
+    'Your output will be joined directly onto the end of that text, so begin with the exact next',
+    'character - including a leading space if one is needed, or the rest of the word if it stops',
+    'mid-word. Keep the same voice, tense, and formatting.',
   ].join('\n');
 }
 
