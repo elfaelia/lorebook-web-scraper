@@ -239,34 +239,31 @@ async function runGeneration(prompt, opts) {
     ? Object.keys(profile).filter((k) => !/^(createdAt|updatedAt|created_at|updated_at)$/.test(k)).join(',')
     : 'none';
 
-  const bare = { messages: body.messages, maxTokens: body.maxTokens, temperature: body.temperature };
-  const withUser = { ...bare, userId: o.userId };
+  // The host told us the field names itself:
+  //   "Pass api_key or connection_id in the request"
+  // and every connection field is snake_case (api_url, preset_id, is_default).
+  // Everything sent so far used camelCase, which is why nothing resolved.
+  const connId = (profile && profile.id) || o.connectionId;
 
-  // Everything the connection record carries, minus its own id/name wrappers,
-  // so provider/model/apiUrl and friends reach the call whatever they are named.
-  const spread = profile ? { ...profile } : {};
-  delete spread.id;
-  delete spread.name;
-  delete spread.label;
+  const snake = {
+    messages: body.messages,
+    max_tokens: body.maxTokens,
+    temperature: body.temperature,
+  };
 
   const variants = [];
   const push = (label, fn) => variants.push([label, fn]);
 
   for (const m of order) {
-    if (profile) {
-      push(`${m}|profile spread`, () => gen[m]({ ...withUser, ...spread }));
-      push(`${m}|provider+model`, () => gen[m]({
-        ...withUser,
-        provider: profile.provider || profile.type || profile.source,
-        model: profile.model || profile.modelId,
-      }));
-      push(`${m}|connection object`, () => gen[m]({ ...withUser, connection: profile }));
-      push(`${m}|connectionId`, () => gen[m]({ ...withUser, connectionId: profile.id }));
+    if (connId) {
+      push(`${m}|snake+connection_id`, () => gen[m]({ ...snake, connection_id: connId, user_id: o.userId }));
+      push(`${m}|snake+conn+userId`, () => gen[m]({ ...snake, connection_id: connId, userId: o.userId }));
+      push(`${m}|snake+conn only`, () => gen[m]({ ...snake, connection_id: connId }));
     }
-    push(`${m}|body only`, () => gen[m](withUser));
+    push(`${m}|snake+user_id`, () => gen[m]({ ...snake, user_id: o.userId }));
   }
 
-  // Put any previously working shape first.
+  // Reuse whatever worked last time first.
   if (generationShape) {
     const i = variants.findIndex((v) => v[0] === generationShape);
     if (i > 0) variants.unshift(variants.splice(i, 1)[0]);
