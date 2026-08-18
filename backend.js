@@ -861,4 +861,57 @@ spindle.registerInterceptor(async (messages, context) => {
 }, 200);
 
 
+
+/* ------------------------------------------------------------------ */
+/* Continue: strip a duplicated opening block                          */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Replies here begin with a status board, so the model has learned that a block
+ * of output starts with one. On a continue it writes another. Instructions lose
+ * to dozens of in-history examples, so the board is removed after the fact
+ * instead: anything from the first board marker onward is cut from the
+ * continuation, since a board can only legitimately appear at the very start of
+ * a reply and a continuation is never the start.
+ */
+
+const BOARD_MARKERS = [
+  /\n[^\n]{0,4}(?:\u{1F4C5}|\u{1F5D3})/u,        // calendar emoji
+  /\n[^\n]{0,4}(?:\u{1F552}|\u{23F0}|\u{1F570})/u, // clock emoji
+  /\n[^\n]{0,4}(?:\u{1F5FA})/u,                   // map emoji
+  /\n\s*\*{0,2}Date:\*{0,2}\s/i,
+  /\n\s*\*{0,2}Time:\*{0,2}\s/i,
+  /\n\s*\*{0,2}Location:\*{0,2}\s/i,
+];
+
+function stripTrailingBoard(text) {
+  if (typeof text !== 'string' || !text) return { text, cut: 0 };
+  let earliest = -1;
+  for (const re of BOARD_MARKERS) {
+    const m = re.exec(text);
+    if (m && (earliest === -1 || m.index < earliest)) earliest = m.index;
+  }
+  if (earliest === -1) return { text, cut: 0 };
+  const kept = text.slice(0, earliest).trimEnd();
+  return { text: kept, cut: text.length - kept.length };
+}
+
+if (typeof spindle.registerMessageContentProcessor === 'function') {
+  spindle.registerMessageContentProcessor(async (content, context) => {
+    try {
+      if (!context || context.generationType !== 'continue') return content;
+      if (typeof content !== 'string') return content;
+      const { text, cut } = stripTrailingBoard(content);
+      if (cut > 0) spindle.log.info(`[continue] removed ${cut} chars of duplicated status board`);
+      return text;
+    } catch (err) {
+      spindle.log.error(`[continue] board strip failed - ${message(err)}`);
+      return content;
+    }
+  });
+  spindle.log.info('Lorebook Web Scraper: continue board stripper registered.');
+} else {
+  spindle.log.info('Lorebook Web Scraper: registerMessageContentProcessor unavailable; board stripping disabled.');
+}
+
 spindle.log.info('Lorebook Web Scraper backend ready (v2.0). Continue fix registered.');
