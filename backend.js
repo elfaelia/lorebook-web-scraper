@@ -214,32 +214,62 @@ async function runGeneration(prompt, opts) {
   const methods = Object.keys(gen).filter((k) => typeof gen[k] === 'function');
   const order = ['quiet', 'raw', 'quietTracked', 'batch'].filter((m) => methods.includes(m));
 
-  // connections.list on this build takes the user id as a bare first argument
-  // rather than inside an options object, so generation very likely does too.
-  // Positional shapes are tried first for that reason. The list is kept short:
-  // every failed attempt costs a round trip, and too many blow the host's
-  // interceptor deadline before a working shape is reached.
-  const withConn = (obj) => (opts.connectionId ? { ...obj, connectionId: opts.connectionId } : obj);
-  const bare = { messages: body.messages, maxTokens: body.maxTokens, temperature: body.temperature };
+  // Established by elimination from the host's own errors:
+  //   positional userId  -> "userId is required"      (rejected)
+  //   userId in the body -> "No connection profile"   (accepted, connection wrong)
+  //   raw                -> "Unknown provider: "      (wants a provider field)
+  // So userId goes in the body, and the call additionally needs the connection's
+  // own provider/model fields rather than just an id. Those are read from the
+  // connection record and merged in.
+  let profile = null;
+  try {
+    const listed = await spindle.connections.list(o.userId);
+    const rows = Array.isArray(listed) ? listed
+      : listed && Array.isArray(listed.data) ? listed.data
+      : listed && Array.isArray(listed.connections) ? listed.connections : [];
+    profile = (o.connectionId && rows.find((c) => c && c.id === o.connectionId))
+      || rows.find((c) => c && (c.isActive || c.active || c.isDefault))
+      || rows[0]
+      || null;
+  } catch (err) {
+    /* fall through with no profile */
+  }
 
-  const buildVariants = (m) => [
-    [`${m}|userId,body+conn`, () => gen[m](opts.userId, withConn(bare))],
-    [`${m}|userId,body`, () => gen[m](opts.userId, bare)],
-    [`${m}|body.userId+conn`, () => gen[m](withConn({ ...bare, userId: opts.userId }))],
-    [`${m}|body.userId`, () => gen[m]({ ...bare, userId: opts.userId })],
-  ];
+  const profileFields = profile
+    ? Object.keys(profile).filter((k) => !/^(createdAt|updatedAt|created_at|updated_at)$/.test(k)).join(',')
+    : 'none';
+
+  const bare = { messages: body.messages, maxTokens: body.maxTokens, temperature: body.temperature };
+  const withUser = { ...bare, userId: o.userId };
+
+  // Everything the connection record carries, minus its own id/name wrappers,
+  // so provider/model/apiUrl and friends reach the call whatever they are named.
+  const spread = profile ? { ...profile } : {};
+  delete spread.id;
+  delete spread.name;
+  delete spread.label;
 
   const variants = [];
-  if (generationShape) {
-    const m = generationShape.split('|')[0];
-    if (order.includes(m)) {
-      for (const v of buildVariants(m)) if (v[0] === generationShape) variants.push(v);
-    }
-  }
+  const push = (label, fn) => variants.push([label, fn]);
+
   for (const m of order) {
-    for (const v of buildVariants(m)) {
-      if (v[0] !== generationShape) variants.push(v);
+    if (profile) {
+      push(`${m}|profile spread`, () => gen[m]({ ...withUser, ...spread }));
+      push(`${m}|provider+model`, () => gen[m]({
+        ...withUser,
+        provider: profile.provider || profile.type || profile.source,
+        model: profile.model || profile.modelId,
+      }));
+      push(`${m}|connection object`, () => gen[m]({ ...withUser, connection: profile }));
+      push(`${m}|connectionId`, () => gen[m]({ ...withUser, connectionId: profile.id }));
     }
+    push(`${m}|body only`, () => gen[m](withUser));
+  }
+
+  // Put any previously working shape first.
+  if (generationShape) {
+    const i = variants.findIndex((v) => v[0] === generationShape);
+    if (i > 0) variants.unshift(variants.splice(i, 1)[0]);
   }
 
   const failures = [];
@@ -281,7 +311,7 @@ async function runGeneration(prompt, opts) {
     }
   }
 
-  throw new Error(`Generation failed in all ${variants.length} shapes. ${failures.join(' | ')}`);
+  throw new Error(`Generation failed in all ${variants.length} shapes. Connection fields seen: [${profileFields}]. ${failures.join(' | ')}`);
 }
 
 spindle.onFrontendMessage(async (payload, handlerUserId) => {
