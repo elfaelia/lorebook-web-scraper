@@ -756,7 +756,7 @@ export function setup(ctx) {
     try {
       const d = await call('lws:diag', {}, 25000);
       log('— Setup check —');
-      log(`Frontend 2.15 · Backend ${d.backendVersion || 'older — it did not reload'}`);
+      log(`Frontend 2.16 · Backend ${d.backendVersion || 'older — it did not reload'}`);
       log(`generate: ${d.generateType} · ${d.generateMethods}`);
       log(`User ID: ${d.userId}`);
       log(`Granted: ${(d.granted || []).join(', ') || '(none)'}`);
@@ -849,7 +849,8 @@ export function setup(ctx) {
           <button class="lws-btn lws-mini" data-vact="refreshVConn" title="Reload connections">↻</button>
         </div>
         <input id="lwsv-style" placeholder="Setting, optional — e.g. 1959 institutional psychiatry" />
-        <button class="lws-btn lws-btn-primary" data-vact="addCues">Add cues to every entry</button>
+        <button class="lws-btn lws-btn-primary" data-vact="previewCues">Preview cues</button>
+        <button class="lws-btn" data-vact="saveCues">Save previewed cues</button>
         <button class="lws-btn" data-vact="stripCues">Remove cues</button>
       </div>
     </details>
@@ -1172,7 +1173,9 @@ export function setup(ctx) {
     }), (e) => String(e.content || '').includes(CUE_START));
   });
 
-  vWrap.querySelector('[data-vact="addCues"]').addEventListener('click', async (e) => {
+  let cuePreview = new Map();
+
+  vWrap.querySelector('[data-vact="previewCues"]').addEventListener('click', async (e) => {
     const bookId = vBookSelect.value;
     if (!bookId) { vLog('Choose a lorebook first.'); return; }
     if (!scanned.length) await vScan();
@@ -1186,10 +1189,10 @@ export function setup(ctx) {
 
     const button = e.currentTarget;
     button.disabled = true;
+    cuePreview = new Map();
     vLog(`Generating cues for ${targets.length} entries…`);
-    let done = 0;
-    let failed = 0;
 
+    let failed = 0;
     for (const entry of targets) {
       try {
         const res = await call('lws:expand_entry', {
@@ -1197,29 +1200,52 @@ export function setup(ctx) {
           title: entry.comment,
           style: style || undefined,
           connectionId: vConnSelect.value || undefined,
-        }, 120000);
+        }, 90000);
 
-        const cues = (res.cues || []).join('\n');
-        if (!cues) { failed++; continue; }
+        const cues = (res.cues || []).filter((c) => c.length > 3);
+        if (!cues.length) { failed++; vLog(`  ${entry.comment}: nothing usable`); continue; }
 
+        cuePreview.set(entry.id, cues);
+        vLog(`${entry.comment}`);
+        for (const c of cues) vLog(`   · ${c}`);
+      } catch (err) {
+        failed++;
+        vLog(`  "${entry.comment}" failed — ${err.message}`);
+      }
+      await new Promise((r) => setTimeout(r, 400));
+    }
+
+    vLog(`Previewed ${cuePreview.size} entries${failed ? `, ${failed} failed` : ''}. Read them, then Save.`);
+    button.disabled = false;
+  });
+
+  vWrap.querySelector('[data-vact="saveCues"]').addEventListener('click', async (e) => {
+    if (!cuePreview.size) { vLog('Run Preview first so you can check the cues.'); return; }
+    const button = e.currentTarget;
+    button.disabled = true;
+
+    let done = 0;
+    let failed = 0;
+    for (const entry of scanned) {
+      const cues = cuePreview.get(entry.id);
+      if (!cues) continue;
+      try {
         await call('lws:update_entry', {
           entryId: entry.id,
-          patch: { content: `${entry.content.trimEnd()}${CUE_START}${cues}` },
+          patch: { content: `${String(entry.content).trimEnd()}${CUE_START}${cues.join('\n')}` },
         }, 30000);
-
         done++;
-        vLog(`  ${entry.comment}: ${res.cues.length} cues`);
       } catch (err) {
         failed++;
         if (failed <= 2) vLog(`  "${entry.comment}" failed — ${err.message}`);
       }
     }
 
-    vLog(`Cues added to ${done} entries${failed ? `, ${failed} failed` : ''}. Re-index for them to take effect.`);
+    vLog(`Saved cues to ${done} entries${failed ? `, ${failed} failed` : ''}. Re-index to take effect.`);
+    cuePreview = new Map();
     button.disabled = false;
     await vScan();
   });
-
 
   const vConnSelect = vWrap.querySelector('#lwsv-conn');
 
