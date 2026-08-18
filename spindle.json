@@ -1,5 +1,5 @@
 {
-  "version": "2.10.0",
+  "version": "2.11.0",
   "name": "Lorebook Web Scraper",
   "identifier": "lorebook_web_scraper",
   "author": "elfaelia",
@@ -10,7 +10,8 @@
     "world_books",
     "cors_proxy",
     "interceptor",
-    "generation"
+    "generation",
+    "chat_mutation"
   ],
   "entry_backend": "backend.js",
   "entry_frontend": "frontend.js"

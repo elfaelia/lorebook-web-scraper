@@ -835,8 +835,36 @@ spindle.registerInterceptor(async (messages, context) => {
     }
 
     if (index === -1) {
-      spindle.log.info('[continue-fix] no trailing assistant turn found — leaving prompt alone');
-      return messages;
+      // Lumiverse already ends the prompt on a user turn, so no prefill rewrite is
+      // needed. Append the no-new-status-block rule to that final turn instead,
+      // which is the only place an instruction will actually reach the model.
+      const lastIdx = messages.length - 1;
+      const last = messages[lastIdx];
+      if (!last || last.role !== 'user') {
+        spindle.log.info('[continue-fix] prompt does not end on a user turn; leaving it alone');
+        return messages;
+      }
+
+      const rule = [
+        '',
+        '',
+        '[Continuation rules: you are resuming a reply already in progress, not starting a new one.',
+        'Do not write a status block, info panel, header, tracker, or any Date / Time / Location /',
+        'Present / Activity lines. Those belong only at the very start of a reply and this reply has',
+        'already started. Continue the prose only, from exactly where it stops.]',
+      ].join('\n');
+
+      const existing = contentToText(last.content);
+      if (existing.includes('[Continuation rules:')) return messages;
+
+      const rebuilt = messages.slice(0, lastIdx);
+      rebuilt.push({ ...last, content: existing + rule });
+
+      spindle.log.info('[continue-fix] appended continuation rules to the final user turn');
+      return {
+        messages: rebuilt,
+        breakdown: [{ messageIndex: rebuilt.length - 1, name: 'Continue rules' }],
+      };
     }
 
     const fragment = contentToText(messages[index].content).replace(/\s+$/, '');
@@ -914,4 +942,4 @@ if (typeof spindle.registerMessageContentProcessor === 'function') {
   spindle.log.info('Lorebook Web Scraper: registerMessageContentProcessor unavailable; board stripping disabled.');
 }
 
-spindle.log.info('Lorebook Web Scraper backend ready (v2.0). Continue fix registered.');
+spindle.log.info('Lorebook Web Scraper backend ready (v2.11). Continue fix registered.');
