@@ -756,7 +756,7 @@ export function setup(ctx) {
     try {
       const d = await call('lws:diag', {}, 25000);
       log('— Setup check —');
-      log(`Frontend 2.11 · Backend ${d.backendVersion || 'older — it did not reload'}`);
+      log(`Frontend 2.13 · Backend ${d.backendVersion || 'older — it did not reload'}`);
       log(`generate: ${d.generateType} · ${d.generateMethods}`);
       log(`User ID: ${d.userId}`);
       log(`Granted: ${(d.granted || []).join(', ') || '(none)'}`);
@@ -844,6 +844,10 @@ export function setup(ctx) {
       <summary>Retrieval cues</summary>
       <div class="lws-secbody">
         <p class="lws-hint">Clinical or formal entries rarely match narrative chat, so they never surface. This appends a few plain-language lines describing what the topic looks like in a scene. The entry keeps its own voice; only the embedding shifts.</p>
+        <div class="lws-inline">
+          <select id="lwsv-conn"></select>
+          <button class="lws-btn lws-mini" data-vact="refreshVConn" title="Reload connections">↻</button>
+        </div>
         <input id="lwsv-style" placeholder="Setting, optional — e.g. 1959 institutional psychiatry" />
         <button class="lws-btn lws-btn-primary" data-vact="addCues">Add cues to every entry</button>
         <button class="lws-btn" data-vact="stripCues">Remove cues</button>
@@ -1192,7 +1196,7 @@ export function setup(ctx) {
           content: entry.content,
           title: entry.comment,
           style: style || undefined,
-          connectionId: (wrap.querySelector('#lws-conn') || {}).value || undefined,
+          connectionId: vConnSelect.value || undefined,
         }, 120000);
 
         const cues = (res.cues || []).join('\n');
@@ -1216,7 +1220,32 @@ export function setup(ctx) {
     await vScan();
   });
 
+
+  const vConnSelect = vWrap.querySelector('#lwsv-conn');
+
+  async function vLoadConnections() {
+    vConnSelect.innerHTML = '';
+    const fallback = document.createElement('option');
+    fallback.value = '';
+    fallback.textContent = 'Default connection';
+    vConnSelect.appendChild(fallback);
+    try {
+      const result = await call('lws:list_connections', {}, 20000);
+      for (const conn of result.connections || []) {
+        const o = document.createElement('option');
+        o.value = conn.id;
+        o.textContent = conn.model ? `${conn.name} — ${conn.model}` : conn.name;
+        vConnSelect.appendChild(o);
+      }
+    } catch (err) {
+      vLog(`Could not list connections: ${err.message}`);
+    }
+  }
+
+  vWrap.querySelector('[data-vact="refreshVConn"]').addEventListener('click', vLoadConnections);
+
   vLoadBooks().then(vScan);
+  vLoadConnections();
 
   return () => {
     for (const entry of pending.values()) clearTimeout(entry.timer);

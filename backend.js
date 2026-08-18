@@ -712,7 +712,7 @@ spindle.onFrontendMessage(async (payload, handlerUserId) => {
               if (active && active.id) { chosen = active.id; break; }
             } catch (e) { /* try the next shape */ }
           }
-          if (!chosen) return fail('No connection profile could be resolved. Pick one in the Vectors tab.');
+          // Not fatal: the plain call below falls back to the active connection.
         }
 
         const body = {
@@ -722,12 +722,16 @@ spindle.onFrontendMessage(async (payload, handlerUserId) => {
           userId,
         };
 
-        const keys = ['connectionId', 'connectionProfileId', 'profileId', 'connection'];
+        // Calling with no connection key uses the active profile and is the path that
+        // actually works here; supplying an id from connections.list is rejected.
+        const keys = chosen
+          ? [null, 'connectionId', 'connectionProfileId', 'profileId', 'connection']
+          : [null];
         let out = '';
         const failures = [];
         outer:
         for (const name of ordered) {
-          for (const key of (chosen ? keys : [null])) {
+          for (const key of keys) {
             try {
               const payloadBody = key ? { ...body, [key]: chosen } : { ...body };
               const r = await gen[name](payloadBody);
