@@ -136,6 +136,79 @@ async function resolveUserId(handlerUserId, payload) {
   return { id: undefined, from: 'nowhere — none of the sources had one' };
 }
 
+
+/**
+ * One generation path shared by condensing and cue writing, so whatever call
+ * shape works for one works for the other. Records the winning shape and
+ * reuses it for the rest of the session.
+ */
+let generationShape = null;
+
+async function runGeneration(prompt, opts) {
+  const o = opts || {};
+  const gen = spindle.generate;
+  if (!gen || typeof gen !== 'object') throw new Error('spindle.generate is unavailable.');
+
+  const body = {
+    messages: [{ role: 'user', content: prompt }],
+    maxTokens: o.maxTokens || 1024,
+    temperature: typeof o.temperature === 'number' ? o.temperature : 0.3,
+    userId: o.userId,
+  };
+
+  const readText = (r) => (
+    typeof r === 'string' ? r
+    : r && typeof r.text === 'string' ? r.text
+    : r && typeof r.content === 'string' ? r.content
+    : r && typeof r.output === 'string' ? r.output
+    : r && r.message && typeof r.message.content === 'string' ? r.message.content
+    : r && Array.isArray(r.content) ? partsToText(r.content)
+    : r && r.choices && r.choices[0] && r.choices[0].message
+      ? String(r.choices[0].message.content || '')
+    : ''
+  ).trim();
+
+  const methods = Object.keys(gen).filter((k) => typeof gen[k] === 'function');
+  const order = ['quiet', 'raw', 'quietTracked', 'batch'].filter((m) => methods.includes(m));
+  const keys = o.connectionId
+    ? ['connectionId', 'connectionProfileId', 'profileId', 'connection', null]
+    : [null];
+
+  const variants = [];
+  if (generationShape) {
+    const [m, k] = generationShape.split('|');
+    if (order.includes(m)) {
+      variants.push([generationShape, () => gen[m](k === 'null' ? { ...body } : { ...body, [k]: o.connectionId })]);
+    }
+  }
+  for (const m of order) {
+    for (const k of keys) {
+      const label = `${m}|${k === null ? 'null' : k}`;
+      if (label === generationShape) continue;
+      variants.push([label, () => gen[m](k === null ? { ...body } : { ...body, [k]: o.connectionId })]);
+    }
+  }
+
+  const failures = [];
+  for (const [label, run] of variants) {
+    try {
+      const out = readText(await run());
+      if (out) {
+        if (generationShape !== label) {
+          generationShape = label;
+          spindle.log.info(`Lorebook Web Scraper: generation works via ${label}`);
+        }
+        return out;
+      }
+      failures.push(`${label}: empty`);
+    } catch (err) {
+      failures.push(`${label}: ${message(err)}`);
+    }
+  }
+
+  throw new Error(`Generation failed in all ${variants.length} shapes. ${failures.join(' | ')}`);
+}
+
 spindle.onFrontendMessage(async (payload, handlerUserId) => {
   const resolved = await resolveUserId(handlerUserId, payload);
   const userId = resolved.id;
@@ -453,99 +526,19 @@ spindle.onFrontendMessage(async (payload, handlerUserId) => {
         ].join('\n');
 
         const maxTokens = Math.max(512, Math.ceil(hardLimit * 1.6));
-        const base = { messages: [{ role: 'user', content: prompt }], maxTokens, temperature: 0.3, userId };
 
-        // The winning call shape is generate.quiet({ ...body, userId }). What it still
-        // needs is a connection profile, and the key name for that is not documented,
-        // so try the likely names. If the caller picked nothing, resolve the first
-        // available connection rather than relying on an implicit default.
-        let chosenConnection = connectionId;
-        if (!chosenConnection) {
-          try {
-            const listed = await spindle.connections.list({ limit: 50, offset: 0, userId });
-            const rows = Array.isArray(listed) ? listed
-              : listed && Array.isArray(listed.data) ? listed.data
-              : listed && Array.isArray(listed.connections) ? listed.connections : [];
-            const active = rows.find((c) => c.isActive || c.active || c.isDefault || c.default) || rows[0];
-            if (active && active.id) {
-              chosenConnection = active.id;
-              spindle.log.info(`Lorebook Web Scraper: no connection chosen, using "${active.name || active.id}"`);
-            }
-          } catch (err) {
-            spindle.log.error(`Lorebook Web Scraper: could not resolve a connection — ${message(err)}`);
-          }
+        let condensed = '';
+        try {
+          condensed = await runGeneration(prompt, {
+            maxTokens, temperature: 0.3, connectionId, userId,
+          });
+        } catch (err) {
+          return fail(message(err));
         }
+        if (!condensed) return fail('The condenser returned nothing.');
 
-        const connectionKeys = ['connectionId', 'connectionProfileId', 'profileId', 'connection', 'connection_id'];
-        const gen = spindle.generate;
-        const methodOrder = ['quiet', 'raw', 'quietTracked', 'batch'];
-        const available = (gen && typeof gen === 'object')
-          ? Object.keys(gen).filter((k) => typeof gen[k] === 'function')
-          : [];
-        const ordered = methodOrder.filter((n) => available.includes(n));
-
-        const variants = [];
-        for (const name of ordered) {
-          if (chosenConnection) {
-            for (const key of connectionKeys) {
-              variants.push([`${name}({...body, ${key}})`, () => gen[name]({ ...base, [key]: chosenConnection })]);
-            }
-          }
-          variants.push([`${name}({...body}) no connection`, () => gen[name]({ ...base })]);
-        }
-
-        let result;
-        let usedShape = 'none';
-        const failures = [];
-        for (const [label, run] of variants) {
-          try {
-            const r = await run();
-            if (r != null && r !== '') { result = r; usedShape = label; break; }
-            failures.push(`${label} -> empty`);
-          } catch (err) {
-            failures.push(`${label} -> ${message(err)}`);
-          }
-        }
-
-        const condensed = (
-          typeof result === 'string' ? result
-          : result && typeof result.text === 'string' ? result.text
-          : result && typeof result.content === 'string' ? result.content
-          : result && typeof result.output === 'string' ? result.output
-          : result && result.message && typeof result.message.content === 'string' ? result.message.content
-          : result && Array.isArray(result.content) ? partsToText(result.content)
-          : result && result.choices && result.choices[0] && result.choices[0].message
-            ? String(result.choices[0].message.content || '')
-          : ''
-        ).trim();
-
-        if (!condensed) {
-          return fail(`No text from generate. Connection used: ${chosenConnection || 'none resolved'}. Failures: ${failures.slice(0, 6).join(' | ') || '(none)'}`);
-        }
-
-        spindle.log.info(`Lorebook Web Scraper: condense worked via ${usedShape}`);
-
-        // Models drift long. If the result overshoots the ceiling, ask it to tighten
-        // rather than truncating, so sentences stay whole.
-        const methodName = usedShape.split('(')[0];
-        const keyMatch = usedShape.match(/, (\w+)\}/);
-        const connKey = keyMatch ? keyMatch[1] : 'connectionId';
-
-        const runGen = async (msgs, cap) => {
-          const bodyObj = { ...base, messages: msgs, maxTokens: cap };
-          if (chosenConnection) bodyObj[connKey] = chosenConnection;
-          const r = await gen[methodName](bodyObj);
-          return (
-            typeof r === 'string' ? r
-            : r && typeof r.text === 'string' ? r.text
-            : r && typeof r.content === 'string' ? r.content
-            : r && typeof r.output === 'string' ? r.output
-            : r && r.message && typeof r.message.content === 'string' ? r.message.content
-            : r && Array.isArray(r.content) ? partsToText(r.content)
-            : ''
-          ).trim();
-        };
-
+        // Models drift long. If it overshoots the ceiling, ask it to tighten rather
+        // than truncating, so sentences stay whole.
         let finalText = condensed;
         let measured = await countTokens(finalText, userId);
         let passes = 0;
@@ -567,14 +560,15 @@ spindle.onFrontendMessage(async (payload, handlerUserId) => {
           ].join('\n');
 
           try {
-            const tightened = await runGen(
-              [{ role: 'user', content: tightenPrompt }],
-              Math.max(512, Math.ceil(hardLimit * 1.4)),
-            );
+            const tightened = await runGeneration(tightenPrompt, {
+              maxTokens: Math.max(512, Math.ceil(hardLimit * 1.4)),
+              temperature: 0.3,
+              connectionId,
+              userId,
+            });
             if (!tightened) break;
             finalText = tightened;
             measured = await countTokens(finalText, userId);
-            spindle.log.info(`Lorebook Web Scraper: tighten pass ${passes} gave ${measured.tokens} tokens`);
           } catch (err) {
             spindle.log.error(`Lorebook Web Scraper: tighten pass failed - ${message(err)}`);
             break;
@@ -584,77 +578,12 @@ spindle.onFrontendMessage(async (payload, handlerUserId) => {
         return reply({
           type: 'lws:condensed',
           text: finalText,
-          shape: usedShape,
+          shape: generationShape || 'unknown',
           originalLength: text.length,
           tokens: measured.tokens,
           exactTokens: measured.exact,
           hardLimit,
           passes,
-        });
-      }
-
-
-      case 'lws:inspect_entry': {
-        const bookId = String(payload.bookId || '').trim();
-        if (!bookId) return fail('No lorebook selected.');
-
-        const res = await attempt('world_books.entries.list', [
-          ['options.userId', () => entries().list(bookId, { limit: 1, offset: 0, userId })],
-          ['third argument', () => entries().list(bookId, { limit: 1, offset: 0 }, userId)],
-        ]);
-        const rows = res && Array.isArray(res.data) ? res.data : Array.isArray(res) ? res : [];
-        if (!rows.length) return fail('That lorebook has no entries to inspect.');
-
-        const entry = rows[0];
-        const fields = Object.keys(entry).sort().map((k) => {
-          const v = entry[k];
-          let shown;
-          if (v === null) shown = 'null';
-          else if (Array.isArray(v)) shown = `[${v.length}]`;
-          else if (typeof v === 'object') shown = `{${Object.keys(v).join(',')}}`;
-          else if (typeof v === 'string') shown = v.length > 40 ? `"${v.slice(0, 40)}…"` : `"${v}"`;
-          else shown = String(v);
-          return `${k} = ${shown}`;
-        });
-
-        return reply({ type: 'lws:entry_schema', comment: entry.comment || '(no label)', fields });
-      }
-
-      case 'lws:bulk_field': {
-        const bookId = String(payload.bookId || '').trim();
-        const field = String(payload.field || '').trim();
-        if (!bookId || !field) return fail('Need a lorebook and a field name.');
-
-        const value = payload.value;
-        const onlyVectorized = !!payload.onlyVectorized;
-
-        const collected = [];
-        let offset = 0;
-        for (let page = 0; page < 20; page++) {
-          const res = await entries().list(bookId, { limit: 200, offset, userId });
-          const rows = res && Array.isArray(res.data) ? res.data : Array.isArray(res) ? res : [];
-          collected.push(...rows);
-          if (rows.length < 200) break;
-          offset += rows.length;
-        }
-
-        const targets = collected.filter((e) => e && e.id && (!onlyVectorized || e.vectorized));
-        let done = 0;
-        const failures = [];
-        for (const e of targets) {
-          try {
-            await entries().update(e.id, { [field]: value, userId });
-            done++;
-          } catch (err) {
-            if (failures.length < 3) failures.push(message(err));
-          }
-        }
-
-        return reply({
-          type: 'lws:bulk_done',
-          updated: done,
-          attempted: targets.length,
-          failures,
         });
       }
 
@@ -687,70 +616,15 @@ spindle.onFrontendMessage(async (payload, handlerUserId) => {
           '"""',
         ].filter(Boolean).join('\n');
 
-        const gen = spindle.generate;
-        const methodOrder = ['quiet', 'raw', 'quietTracked', 'batch'];
-        const available = (gen && typeof gen === 'object')
-          ? Object.keys(gen).filter((k) => typeof gen[k] === 'function') : [];
-        const ordered = methodOrder.filter((n) => available.includes(n));
-        if (!ordered.length) return fail('No usable generation method.');
-
-        let chosen = connectionId;
-        if (!chosen) {
-          // connections.list on this build takes the user id as a bare string.
-          const shapes = [
-            () => spindle.connections.list(userId),
-            () => spindle.connections.list({ limit: 50, offset: 0, userId }),
-            () => spindle.connections.list(),
-          ];
-          for (const run of shapes) {
-            try {
-              const listed = await run();
-              const rows = Array.isArray(listed) ? listed
-                : listed && Array.isArray(listed.data) ? listed.data
-                : listed && Array.isArray(listed.connections) ? listed.connections : [];
-              const active = rows.find((c) => c.isActive || c.isDefault) || rows[0];
-              if (active && active.id) { chosen = active.id; break; }
-            } catch (e) { /* try the next shape */ }
-          }
-          // Not fatal: the plain call below falls back to the active connection.
-        }
-
-        const body = {
-          messages: [{ role: 'user', content: prompt }],
-          maxTokens: 400,
-          temperature: 0.5,
-          userId,
-        };
-
-        // Calling with no connection key uses the active profile and is the path that
-        // actually works here; supplying an id from connections.list is rejected.
-        const keys = chosen
-          ? [null, 'connectionId', 'connectionProfileId', 'profileId', 'connection']
-          : [null];
         let out = '';
-        const failures = [];
-        outer:
-        for (const name of ordered) {
-          for (const key of keys) {
-            try {
-              const payloadBody = key ? { ...body, [key]: chosen } : { ...body };
-              const r = await gen[name](payloadBody);
-              out = (
-                typeof r === 'string' ? r
-                : r && typeof r.text === 'string' ? r.text
-                : r && typeof r.content === 'string' ? r.content
-                : r && r.message && typeof r.message.content === 'string' ? r.message.content
-                : r && Array.isArray(r.content) ? partsToText(r.content)
-                : ''
-              ).trim();
-              if (out) break outer;
-            } catch (err) {
-              if (failures.length < 4) failures.push(`${name}/${key}: ${message(err)}`);
-            }
-          }
+        try {
+          out = await runGeneration(prompt, {
+            maxTokens: 400, temperature: 0.5, connectionId, userId,
+          });
+        } catch (err) {
+          return fail(message(err));
         }
-
-        if (!out) return fail(`Could not generate cues. ${failures.join(' | ')}`);
+        if (!out) return fail('The model returned nothing for this entry.');
 
         const cues = out.split('\n')
           .map((l) => l.replace(/^[-*\d.)\s]+/, '').trim())
