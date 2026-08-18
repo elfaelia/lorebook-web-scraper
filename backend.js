@@ -696,13 +696,23 @@ spindle.onFrontendMessage(async (payload, handlerUserId) => {
 
         let chosen = connectionId;
         if (!chosen) {
-          try {
-            const listed = await spindle.connections.list({ limit: 50, offset: 0, userId });
-            const rows = Array.isArray(listed) ? listed
-              : listed && Array.isArray(listed.data) ? listed.data : [];
-            const active = rows.find((c) => c.isActive || c.isDefault) || rows[0];
-            if (active && active.id) chosen = active.id;
-          } catch (e) { /* fall through */ }
+          // connections.list on this build takes the user id as a bare string.
+          const shapes = [
+            () => spindle.connections.list(userId),
+            () => spindle.connections.list({ limit: 50, offset: 0, userId }),
+            () => spindle.connections.list(),
+          ];
+          for (const run of shapes) {
+            try {
+              const listed = await run();
+              const rows = Array.isArray(listed) ? listed
+                : listed && Array.isArray(listed.data) ? listed.data
+                : listed && Array.isArray(listed.connections) ? listed.connections : [];
+              const active = rows.find((c) => c.isActive || c.isDefault) || rows[0];
+              if (active && active.id) { chosen = active.id; break; }
+            } catch (e) { /* try the next shape */ }
+          }
+          if (!chosen) return fail('No connection profile could be resolved. Pick one in the Vectors tab.');
         }
 
         const body = {
