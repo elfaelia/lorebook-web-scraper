@@ -756,7 +756,7 @@ export function setup(ctx) {
     try {
       const d = await call('lws:diag', {}, 25000);
       log('— Setup check —');
-      log(`Frontend 2.7 · Backend ${d.backendVersion || 'older — it did not reload'}`);
+      log(`Frontend 2.8 · Backend ${d.backendVersion || 'older — it did not reload'}`);
       log(`generate: ${d.generateType} · ${d.generateMethods}`);
       log(`User ID: ${d.userId}`);
       log(`Granted: ${(d.granted || []).join(', ') || '(none)'}`);
@@ -827,6 +827,7 @@ export function setup(ctx) {
           <label>Slots per turn<input type="number" id="lwsv-slots" min="1" max="12" step="1" placeholder="1" /></label>
           <button class="lws-btn" data-vact="splitGroups">Split</button>
         </div>
+        <button class="lws-btn" data-vact="ungroup">Remove all grouping from this book</button>
         <p class="lws-hint">One entry fires per group name. Apply sets a single shared group, capping the book at one per turn. Split spreads entries across that many numbered sub-groups instead, so the book contributes that many per turn. Clear the group box and Apply to remove grouping.</p>
         <div class="lws-row2">
           <label>Sticky<input type="number" id="lwsv-sticky" min="0" step="1" placeholder="0" /></label>
@@ -836,6 +837,16 @@ export function setup(ctx) {
           <label>Cooldown<input type="number" id="lwsv-cooldown" min="0" step="1" placeholder="0" /></label>
           <button class="lws-btn" data-vact="setCooldown">Apply</button>
         </div>
+      </div>
+    </details>
+
+    <details class="lws-sec">
+      <summary>Retrieval cues</summary>
+      <div class="lws-secbody">
+        <p class="lws-hint">Clinical or formal entries rarely match narrative chat, so they never surface. This appends a few plain-language lines describing what the topic looks like in a scene. The entry keeps its own voice; only the embedding shifts.</p>
+        <input id="lwsv-style" placeholder="Setting, optional — e.g. 1959 institutional psychiatry" />
+        <button class="lws-btn lws-btn-primary" data-vact="addCues">Add cues to every entry</button>
+        <button class="lws-btn" data-vact="stripCues">Remove cues</button>
       </div>
     </details>
 
@@ -1141,6 +1152,67 @@ export function setup(ctx) {
 
     vLog(`Split done: ${done} entries into ${base}-1 … ${base}-${slots}${failed ? `, ${failed} failed` : ''}.`);
     vLog(`This book can now contribute up to ${slots} entries per turn.`);
+    await vScan();
+  });
+
+
+  const CUE_START = '\n\n[cues]\n';
+
+  vWrap.querySelector('[data-vact="ungroup"]').addEventListener('click', () => {
+    applyToAll('Remove grouping', () => ({ group_name: '' }), () => true);
+  });
+
+  vWrap.querySelector('[data-vact="stripCues"]').addEventListener('click', () => {
+    applyToAll('Remove cues', (entry) => ({
+      content: String(entry.content || '').split(CUE_START)[0].trimEnd(),
+    }), (e) => String(e.content || '').includes(CUE_START));
+  });
+
+  vWrap.querySelector('[data-vact="addCues"]').addEventListener('click', async (e) => {
+    const bookId = vBookSelect.value;
+    if (!bookId) { vLog('Choose a lorebook first.'); return; }
+    if (!scanned.length) await vScan();
+
+    const style = vVal('#lwsv-style');
+    const targets = scanned.filter((x) => eligible(x)
+      && (vOpt('onlyVectorized') ? x.vectorized : true)
+      && !String(x.content || '').includes(CUE_START));
+
+    if (!targets.length) { vLog('Every entry already has cues, or none matched.'); return; }
+
+    const button = e.currentTarget;
+    button.disabled = true;
+    vLog(`Generating cues for ${targets.length} entries…`);
+    let done = 0;
+    let failed = 0;
+
+    for (const entry of targets) {
+      try {
+        const res = await call('lws:expand_entry', {
+          content: entry.content,
+          title: entry.comment,
+          style: style || undefined,
+          connectionId: (wrap.querySelector('#lws-conn') || {}).value || undefined,
+        }, 120000);
+
+        const cues = (res.cues || []).join('\n');
+        if (!cues) { failed++; continue; }
+
+        await call('lws:update_entry', {
+          entryId: entry.id,
+          patch: { content: `${entry.content.trimEnd()}${CUE_START}${cues}` },
+        }, 30000);
+
+        done++;
+        vLog(`  ${entry.comment}: ${res.cues.length} cues`);
+      } catch (err) {
+        failed++;
+        if (failed <= 2) vLog(`  "${entry.comment}" failed — ${err.message}`);
+      }
+    }
+
+    vLog(`Cues added to ${done} entries${failed ? `, ${failed} failed` : ''}. Re-index for them to take effect.`);
+    button.disabled = false;
     await vScan();
   });
 

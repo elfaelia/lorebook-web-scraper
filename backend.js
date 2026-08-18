@@ -658,6 +658,94 @@ spindle.onFrontendMessage(async (payload, handlerUserId) => {
         });
       }
 
+      case 'lws:expand_entry': {
+        const content = String(payload.content || '').trim();
+        const title = String(payload.title || 'this topic');
+        const connectionId = payload.connectionId ? String(payload.connectionId) : undefined;
+        const style = String(payload.style || '');
+        if (!content) return fail('Entry has no content to expand.');
+
+        const prompt = [
+          'You are improving how a reference note is found by semantic search.',
+          '',
+          'The note below is written in formal clinical prose. The conversations that should surface it',
+          'are informal narrative fiction, so the wording never overlaps and the note is never retrieved.',
+          'Write retrieval cues that bridge that gap.',
+          '',
+          `Produce 4 to 6 short lines describing concrete situations, behaviours and phrasings that mean`,
+          `${title} is happening, as they would actually appear in a scene rather than in a textbook.`,
+          'Use plain narrative language: what someone does, says, feels, or notices.',
+          'No clinical terms, no jargon, no definitions, no headings, no numbering.',
+          'One situation per line, under fifteen words each.',
+          style ? `Setting for context: ${style}` : '',
+          '',
+          'Output only those lines, nothing else.',
+          '',
+          'Note:',
+          '"""',
+          content.slice(0, 8000),
+          '"""',
+        ].filter(Boolean).join('\n');
+
+        const gen = spindle.generate;
+        const methodOrder = ['quiet', 'raw', 'quietTracked', 'batch'];
+        const available = (gen && typeof gen === 'object')
+          ? Object.keys(gen).filter((k) => typeof gen[k] === 'function') : [];
+        const ordered = methodOrder.filter((n) => available.includes(n));
+        if (!ordered.length) return fail('No usable generation method.');
+
+        let chosen = connectionId;
+        if (!chosen) {
+          try {
+            const listed = await spindle.connections.list({ limit: 50, offset: 0, userId });
+            const rows = Array.isArray(listed) ? listed
+              : listed && Array.isArray(listed.data) ? listed.data : [];
+            const active = rows.find((c) => c.isActive || c.isDefault) || rows[0];
+            if (active && active.id) chosen = active.id;
+          } catch (e) { /* fall through */ }
+        }
+
+        const body = {
+          messages: [{ role: 'user', content: prompt }],
+          maxTokens: 400,
+          temperature: 0.5,
+          userId,
+        };
+
+        const keys = ['connectionId', 'connectionProfileId', 'profileId', 'connection'];
+        let out = '';
+        const failures = [];
+        outer:
+        for (const name of ordered) {
+          for (const key of (chosen ? keys : [null])) {
+            try {
+              const payloadBody = key ? { ...body, [key]: chosen } : { ...body };
+              const r = await gen[name](payloadBody);
+              out = (
+                typeof r === 'string' ? r
+                : r && typeof r.text === 'string' ? r.text
+                : r && typeof r.content === 'string' ? r.content
+                : r && r.message && typeof r.message.content === 'string' ? r.message.content
+                : r && Array.isArray(r.content) ? partsToText(r.content)
+                : ''
+              ).trim();
+              if (out) break outer;
+            } catch (err) {
+              if (failures.length < 4) failures.push(`${name}/${key}: ${message(err)}`);
+            }
+          }
+        }
+
+        if (!out) return fail(`Could not generate cues. ${failures.join(' | ')}`);
+
+        const cues = out.split('\n')
+          .map((l) => l.replace(/^[-*\d.)\s]+/, '').trim())
+          .filter((l) => l.length > 3)
+          .slice(0, 6);
+
+        return reply({ type: 'lws:expanded', cues });
+      }
+
       default:
         return;
     }
