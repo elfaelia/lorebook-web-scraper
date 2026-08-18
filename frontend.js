@@ -325,6 +325,34 @@ export function setup(ctx) {
     #lws-text { min-height: 150px; font-size: 12px; line-height: 1.45; }
     #lws-target { width: 84px; }
     .lws-step small { font-size: 11px; }
+    .lws-bookpick { font-size: 13px; padding: 8px 10px; }
+    .lws-stats { display: flex; flex-wrap: wrap; gap: 5px; }
+    .lws-chip { display: inline-flex; align-items: baseline; gap: 4px;
+      padding: 3px 8px; border-radius: 999px; font-size: 11px;
+      background: var(--lumiverse-fill); color: var(--lumiverse-text-muted); }
+    .lws-chip b { font-size: 12.5px; color: var(--lumiverse-text); }
+    .lws-chip-ok b { color: var(--lumiverse-success, #6fcf8e); }
+    .lws-sec { border: 1px solid var(--lumiverse-border);
+      border-radius: var(--lumiverse-radius); background: var(--lumiverse-fill-subtle);
+      overflow: hidden; }
+    .lws-sec > summary { padding: 9px 11px; cursor: pointer; list-style: none;
+      font-size: 11.5px; letter-spacing: .05em; text-transform: uppercase;
+      color: var(--lumiverse-text-dim, var(--lumiverse-text-muted)); }
+    .lws-sec > summary::-webkit-details-marker { display: none; }
+    .lws-sec > summary::after { content: "＋"; float: right; opacity: .5; font-size: 12px; }
+    .lws-sec[open] > summary::after { content: "－"; }
+    .lws-sec[open] > summary { color: var(--lumiverse-text);
+      border-bottom: 1px solid var(--lumiverse-border); }
+    .lws-secbody { display: flex; flex-direction: column; gap: 6px; padding: 10px 11px; }
+    .lws-secbody .lws-btn { width: 100%; text-align: center; }
+    .lws-hint { margin: 0; font-size: 11px; line-height: 1.4;
+      color: var(--lumiverse-text-dim, var(--lumiverse-text-muted)); opacity: .8; }
+    .lws-chk { display: flex; align-items: center; gap: 7px; font-size: 12px; cursor: pointer; }
+    .lws-chk input { width: auto; }
+    .lws-row2 { display: flex; gap: 6px; align-items: flex-end; }
+    .lws-row2 label { flex: 1; display: flex; flex-direction: column; gap: 3px;
+      font-size: 11px; color: var(--lumiverse-text-dim, var(--lumiverse-text-muted)); }
+    .lws-row2 .lws-btn { width: auto; flex: none; padding: 7px 14px; }
     .lws-num2 { display: flex; align-items: center; gap: 4px; font-size: 11px;
       color: var(--lumiverse-text-dim, var(--lumiverse-text-muted)); }
     .lws-num2 input { width: 70px; }
@@ -728,7 +756,7 @@ export function setup(ctx) {
     try {
       const d = await call('lws:diag', {}, 25000);
       log('— Setup check —');
-      log(`Frontend 2.5 · Backend ${d.backendVersion || 'older — it did not reload'}`);
+      log(`Frontend 2.6 · Backend ${d.backendVersion || 'older — it did not reload'}`);
       log(`generate: ${d.generateType} · ${d.generateMethods}`);
       log(`User ID: ${d.userId}`);
       log(`Granted: ${(d.granted || []).join(', ') || '(none)'}`);
@@ -761,56 +789,90 @@ export function setup(ctx) {
   vWrap.className = 'lws-wrap';
   vWrap.innerHTML = `
     <div class="lws-statusbar">
-      <span>Status</span>
-      <button class="lws-btn" data-vact="clear">Clear</button>
+      <span>Vectors</span>
+      <button class="lws-btn lws-mini" data-vact="scan">Rescan</button>
+      <button class="lws-btn lws-mini" data-vact="clear">Clear log</button>
     </div>
-    <div class="lws-status" id="lwsv-status">Pick a lorebook to scan.</div>
 
-    <p class="lws-lede">Vectorized entries activate on meaning rather than exact keywords. Needs an embedding provider set up in Settings → Embeddings.</p>
+    <select id="lwsv-book" class="lws-bookpick"></select>
 
-    <div class="lws-field">
-      <label for="lwsv-book">Lorebook</label>
-      <div class="lws-inline">
-        <select id="lwsv-book"></select>
-        <button class="lws-btn" data-vact="scan" title="Scan this book">↻</button>
+    <div class="lws-stats" id="lwsv-stats"></div>
+
+    <div class="lws-status" id="lwsv-status"></div>
+
+    <details class="lws-sec" open>
+      <summary>Activation</summary>
+      <div class="lws-secbody">
+        <button class="lws-btn lws-btn-primary" data-vact="vectorize">Vectorize all</button>
+        <button class="lws-btn" data-vact="strip">Vectorize + clear keywords</button>
+        <button class="lws-btn" data-vact="unvector">Un-vectorize all</button>
+        <button class="lws-btn" data-vact="restore">Restore saved keywords</button>
+        <label class="lws-chk"><input type="checkbox" data-vopt="unvectorOnRestore" checked>Un-vectorize when restoring</label>
       </div>
-    </div>
+    </details>
 
-    <div class="lws-opts">
-      <button class="lws-btn lws-btn-primary" data-vact="vectorize">Vectorize every entry</button>
-      <button class="lws-btn" data-vact="strip">Vectorize and clear keywords</button>
-      <button class="lws-btn" data-vact="restore">Restore cleared keywords</button>
-      <button class="lws-btn" data-vact="unvector">Un-vectorize every entry</button>
-      <label><input type="checkbox" data-vopt="unvectorOnRestore" checked> Also un-vectorize when restoring</label>
-      <hr style="border:0;border-top:1px solid var(--lumiverse-border);margin:4px 0;">
-      <button class="lws-btn" data-vact="suggest">Suggest keywords from entry text</button>
-      <button class="lws-btn" data-vact="applyKeywords">Apply suggested keywords</button>
-      <label><input type="checkbox" data-vopt="onlyEmpty" checked> Only entries that have no keywords</label>
-      <label><input type="checkbox" data-vopt="skipConstant" checked> Leave always-active entries alone</label>
-      <label><input type="checkbox" data-vopt="skipDisabled" checked> Leave disabled entries alone</label>
-    </div>
-
-    <div class="lws-step">
-      <div class="lws-steplabel"><b>?</b> Field tools</div>
-      <small class="lws-info">Inspect shows every field on a real entry, so you can see which ranking controls this build actually has. Bulk set writes one field across a whole book — useful for priority or group.</small>
-      <button class="lws-btn" data-vact="inspect">Inspect entry fields</button>
-      <div class="lws-inline">
-        <input id="lwsv-field" placeholder="field name, e.g. priority" />
-        <input id="lwsv-value" placeholder="value" />
+    <details class="lws-sec">
+      <summary>Ranking</summary>
+      <div class="lws-secbody">
+        <p class="lws-hint">Higher priority wins retrieval slots. Give the books you want surfacing more often a higher number than the ones that dominate.</p>
+        <div class="lws-row2">
+          <label>Priority<input type="number" id="lwsv-priority" min="0" step="1" placeholder="10" /></label>
+          <button class="lws-btn" data-vact="setPriority">Apply</button>
+        </div>
+        <div class="lws-row2">
+          <label>Group<input type="text" id="lwsv-group" placeholder="none" /></label>
+          <button class="lws-btn" data-vact="setGroup">Apply</button>
+        </div>
+        <p class="lws-hint">Entries sharing a group name compete, so only one fires per turn. Useful for capping a book that floods every slot.</p>
+        <div class="lws-row2">
+          <label>Sticky<input type="number" id="lwsv-sticky" min="0" step="1" placeholder="0" /></label>
+          <button class="lws-btn" data-vact="setSticky">Apply</button>
+        </div>
+        <div class="lws-row2">
+          <label>Cooldown<input type="number" id="lwsv-cooldown" min="0" step="1" placeholder="0" /></label>
+          <button class="lws-btn" data-vact="setCooldown">Apply</button>
+        </div>
       </div>
-      <div class="lws-inline">
+    </details>
+
+    <details class="lws-sec">
+      <summary>Keywords</summary>
+      <div class="lws-secbody">
+        <button class="lws-btn" data-vact="suggest">Suggest from entry text</button>
+        <button class="lws-btn" data-vact="applyKeywords">Apply suggestions</button>
+        <label class="lws-chk"><input type="checkbox" data-vopt="onlyEmpty" checked>Only entries with no keywords</label>
+      </div>
+    </details>
+
+    <details class="lws-sec">
+      <summary>Advanced</summary>
+      <div class="lws-secbody">
+        <button class="lws-btn" data-vact="inspect">Inspect entry fields</button>
+        <div class="lws-row2">
+          <label>Field<input type="text" id="lwsv-field" placeholder="priority" /></label>
+          <label>Value<input type="text" id="lwsv-value" placeholder="20" /></label>
+        </div>
         <button class="lws-btn" data-vact="bulkSet">Bulk set on this book</button>
-        <label class="lws-num2"><input type="checkbox" id="lwsv-onlyvec" checked> vectorized only</label>
       </div>
-    </div>
+    </details>
 
+    <details class="lws-sec">
+      <summary>Safety</summary>
+      <div class="lws-secbody">
+        <label class="lws-chk"><input type="checkbox" data-vopt="skipConstant" checked>Skip always-active entries</label>
+        <label class="lws-chk"><input type="checkbox" data-vopt="skipDisabled" checked>Skip disabled entries</label>
+        <label class="lws-chk"><input type="checkbox" data-vopt="onlyVectorized" checked>Ranking changes affect vectorized only</label>
+      </div>
+    </details>
   `;
   vectorTab.root.appendChild(vWrap);
 
   const vBookSelect = vWrap.querySelector('#lwsv-book');
   const vStatus = vWrap.querySelector('#lwsv-status');
+  const vStats = vWrap.querySelector('#lwsv-stats');
   let vFirstLine = true;
   let scanned = [];
+  let suggestions = new Map();
 
   function vLog(text) {
     if (vFirstLine) { vStatus.textContent = ''; vFirstLine = false; }
@@ -818,17 +880,33 @@ export function setup(ctx) {
   }
 
   const vOpt = (name) => vWrap.querySelector(`[data-vopt="${name}"]`).checked;
+  const vVal = (id) => vWrap.querySelector(id).value.trim();
 
-  async function vLoadBooks() {
+  function renderStats() {
+    if (!scanned.length) { vStats.innerHTML = ''; return; }
+    const vec = scanned.filter((e) => e.vectorized).length;
+    const keys = scanned.filter((e) => e.keyCount > 0).length;
+    const saved = scanned.filter((e) => e.hasBackup).length;
+    const chip = (label, value, cls) =>
+      `<span class="lws-chip ${cls || ''}"><b>${value}</b>${label}</span>`;
+    vStats.innerHTML =
+      chip('entries', scanned.length) +
+      chip('vectorized', vec, vec ? 'lws-chip-ok' : '') +
+      chip('keyworded', keys) +
+      (saved ? chip('saved keys', saved) : '');
+  }
+
+  async function vLoadBooks(selectId) {
     try {
       const result = await call('lws:list_books', {}, 25000);
       vBookSelect.innerHTML = '';
       for (const book of result.books || []) {
-        const option = document.createElement('option');
-        option.value = book.id;
-        option.textContent = book.name;
-        vBookSelect.appendChild(option);
+        const o = document.createElement('option');
+        o.value = book.id;
+        o.textContent = book.name;
+        vBookSelect.appendChild(o);
       }
+      if (selectId) vBookSelect.value = selectId;
     } catch (err) {
       vLog(err.message);
     }
@@ -840,13 +918,11 @@ export function setup(ctx) {
     try {
       const result = await call('lws:list_entries', { bookId }, 60000);
       scanned = result.entries || [];
-      const vectorized = scanned.filter((e) => e.vectorized).length;
-      const withKeys = scanned.filter((e) => e.keyCount > 0).length;
-      const backed = scanned.filter((e) => e.hasBackup).length;
-      vLog(`${scanned.length} entries — ${vectorized} vectorized, ${withKeys} still have keywords${backed ? `, ${backed} with saved keywords` : ''}.`);
+      renderStats();
     } catch (err) {
       vLog(err.message);
       scanned = [];
+      renderStats();
     }
   }
 
@@ -862,37 +938,49 @@ export function setup(ctx) {
     if (!scanned.length) await vScan();
 
     const targets = scanned.filter((e) => eligible(e) && filter(e));
-    if (!targets.length) { vLog(`Nothing to change — no entries match for ${label}.`); return; }
+    if (!targets.length) { vLog(`${label}: nothing matched.`); return; }
 
-    vLog(`${label}: ${targets.length} ${targets.length === 1 ? 'entry' : 'entries'}…`);
+    vLog(`${label}: ${targets.length} entries…`);
     let done = 0;
     let failed = 0;
-
     for (const entry of targets) {
       try {
         await call('lws:update_entry', { entryId: entry.id, patch: buildPatch(entry) }, 30000);
         done++;
-        if (done % 10 === 0) vLog(`  ${done} of ${targets.length}…`);
       } catch (err) {
         failed++;
-        if (failed <= 3) vLog(`  "${entry.comment}" failed — ${err.message}`);
+        if (failed <= 2) vLog(`  "${entry.comment}" failed — ${err.message}`);
       }
     }
-
-    vLog(`${label} finished: ${done} updated${failed ? `, ${failed} failed` : ''}.`);
+    vLog(`${label}: updated ${done}${failed ? `, ${failed} failed` : ''}.`);
     await vScan();
   }
 
+  /* ---- field setter shared by the ranking controls ---- */
+  async function setField(fieldLabel, field, rawValue, coerce) {
+    if (rawValue === '') { vLog(`Enter a ${fieldLabel} value first.`); return; }
+    const value = coerce ? coerce(rawValue) : rawValue;
+    await applyToAll(
+      `Set ${fieldLabel} to ${JSON.stringify(value)}`,
+      () => ({ [field]: value }),
+      (e) => (vOpt('onlyVectorized') ? e.vectorized : true),
+    );
+  }
+
+  /* ---- wiring ---- */
+  vBookSelect.addEventListener('change', () => { scanned = []; vScan(); });
+  vWrap.querySelector('[data-vact="scan"]').addEventListener('click', vScan);
   vWrap.querySelector('[data-vact="clear"]').addEventListener('click', () => {
     vStatus.textContent = '';
     vFirstLine = false;
   });
 
-  vWrap.querySelector('[data-vact="scan"]').addEventListener('click', vScan);
-  vBookSelect.addEventListener('change', () => { scanned = []; vScan(); });
-
   vWrap.querySelector('[data-vact="vectorize"]').addEventListener('click', () => {
     applyToAll('Vectorize', () => ({ vectorized: true }), (e) => !e.vectorized);
+  });
+
+  vWrap.querySelector('[data-vact="unvector"]').addEventListener('click', () => {
+    applyToAll('Un-vectorize', () => ({ vectorized: false }), (e) => e.vectorized);
   });
 
   vWrap.querySelector('[data-vact="strip"]').addEventListener('click', () => {
@@ -927,35 +1015,38 @@ export function setup(ctx) {
     }, (e) => e.hasBackup);
   });
 
-
-  let suggestions = new Map();
-
-  vWrap.querySelector('[data-vact="unvector"]').addEventListener('click', () => {
-    applyToAll('Un-vectorize', () => ({ vectorized: false }), (e) => e.vectorized);
+  vWrap.querySelector('[data-vact="setPriority"]').addEventListener('click', () => {
+    setField('priority', 'priority', vVal('#lwsv-priority'), (v) => Number(v) || 0);
+  });
+  vWrap.querySelector('[data-vact="setGroup"]').addEventListener('click', () => {
+    setField('group', 'group_name', vVal('#lwsv-group'), (v) => String(v));
+  });
+  vWrap.querySelector('[data-vact="setSticky"]').addEventListener('click', () => {
+    setField('sticky', 'sticky', vVal('#lwsv-sticky'), (v) => Number(v) || 0);
+  });
+  vWrap.querySelector('[data-vact="setCooldown"]').addEventListener('click', () => {
+    setField('cooldown', 'cooldown', vVal('#lwsv-cooldown'), (v) => Number(v) || 0);
   });
 
   vWrap.querySelector('[data-vact="suggest"]').addEventListener('click', async () => {
     if (!scanned.length) await vScan();
     suggestions = new Map();
-
     const targets = scanned.filter((e) => (vOpt('onlyEmpty') ? e.keyCount === 0 : true));
-    if (!targets.length) { vLog('No entries match — untick "only entries that have no keywords" to include them all.'); return; }
+    if (!targets.length) { vLog('No entries matched.'); return; }
 
-    let empty = 0;
+    let thin = 0;
     for (const entry of targets) {
       const words = suggestKeywords(entry, 6);
-      if (!words.length) { empty++; continue; }
+      if (!words.length) { thin++; continue; }
       suggestions.set(entry.id, words);
-      vLog(`"${entry.comment}" → ${words.join(', ')}`);
+      vLog(`${entry.comment} → ${words.join(', ')}`);
     }
-
-    vLog(`Suggested keywords for ${suggestions.size} of ${targets.length} entries${empty ? ` (${empty} had too little text)` : ''}. Read them, then press Apply.`);
-    vLog('These come from words in the entry itself, so they favour names and topic terms. Add your own scene-language keywords by hand afterwards.');
+    vLog(`Suggested for ${suggestions.size} of ${targets.length}${thin ? ` (${thin} too short)` : ''}.`);
   });
 
   vWrap.querySelector('[data-vact="applyKeywords"]').addEventListener('click', () => {
-    if (!suggestions.size) { vLog('Press Suggest first so you can see what would be applied.'); return; }
-    applyToAll('Apply suggested keywords', (entry) => {
+    if (!suggestions.size) { vLog('Run Suggest first.'); return; }
+    applyToAll('Apply keywords', (entry) => {
       const proposed = suggestions.get(entry.id) || [];
       const merged = [];
       const seen = new Set();
@@ -969,9 +1060,6 @@ export function setup(ctx) {
     }, (e) => suggestions.has(e.id));
   });
 
-
-
-  /* ---- field tools ---- */
   vWrap.querySelector('[data-vact="inspect"]').addEventListener('click', async () => {
     const bookId = vBookSelect.value;
     if (!bookId) { vLog('Choose a lorebook first.'); return; }
@@ -986,28 +1074,26 @@ export function setup(ctx) {
 
   vWrap.querySelector('[data-vact="bulkSet"]').addEventListener('click', async (e) => {
     const bookId = vBookSelect.value;
-    const field = vWrap.querySelector('#lwsv-field').value.trim();
-    const rawValue = vWrap.querySelector('#lwsv-value').value.trim();
+    const field = vVal('#lwsv-field');
+    const raw = vVal('#lwsv-value');
     if (!bookId) { vLog('Choose a lorebook first.'); return; }
-    if (!field) { vLog('Type the field name to set. Use Inspect first if unsure.'); return; }
+    if (!field) { vLog('Type a field name. Use Inspect if unsure.'); return; }
 
-    let value = rawValue;
-    if (rawValue === 'true') value = true;
-    else if (rawValue === 'false') value = false;
-    else if (rawValue === 'null') value = null;
-    else if (rawValue !== '' && !isNaN(Number(rawValue))) value = Number(rawValue);
+    let value = raw;
+    if (raw === 'true') value = true;
+    else if (raw === 'false') value = false;
+    else if (raw === 'null') value = null;
+    else if (raw !== '' && !isNaN(Number(raw))) value = Number(raw);
 
     const button = e.currentTarget;
     button.disabled = true;
     try {
       const res = await call('lws:bulk_field', {
-        bookId,
-        field,
-        value,
-        onlyVectorized: vWrap.querySelector('#lwsv-onlyvec').checked,
+        bookId, field, value, onlyVectorized: vOpt('onlyVectorized'),
       }, 120000);
-      vLog(`Set ${field} = ${JSON.stringify(value)} on ${res.updated} of ${res.attempted} entries.`);
+      vLog(`Set ${field} = ${JSON.stringify(value)} on ${res.updated} of ${res.attempted}.`);
       for (const f of res.failures || []) vLog(`  rejected: ${f}`);
+      await vScan();
     } catch (err) {
       vLog(err.message);
     }
@@ -1015,7 +1101,6 @@ export function setup(ctx) {
   });
 
   vLoadBooks().then(vScan);
-
 
   return () => {
     for (const entry of pending.values()) clearTimeout(entry.timer);
