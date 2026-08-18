@@ -137,6 +137,27 @@ async function resolveUserId(handlerUserId, payload) {
 }
 
 
+
+/** Find the longest string anywhere in a response object, with its path. */
+function deepestString(value, path, depth) {
+  const p = path || '$';
+  const d = depth || 0;
+  if (typeof value === 'string') return { text: value, path: p };
+  if (!value || typeof value !== 'object' || d > 6) return { text: '', path: p };
+
+  let best = { text: '', path: p };
+  const entries = Array.isArray(value)
+    ? value.map((v, i) => [String(i), v])
+    : Object.entries(value);
+
+  for (const [key, child] of entries) {
+    if (/^(id|uuid|model|role|type|status|provider|finishReason|stop_reason)$/i.test(key)) continue;
+    const found = deepestString(child, `${p}.${key}`, d + 1);
+    if (found.text.length > best.text.length) best = found;
+  }
+  return best;
+}
+
 /**
  * One generation path shared by condensing and cue writing, so whatever call
  * shape works for one works for the other. Records the winning shape and
@@ -192,7 +213,8 @@ async function runGeneration(prompt, opts) {
   const failures = [];
   for (const [label, run] of variants) {
     try {
-      const out = readText(await run());
+      const raw = await run();
+      const out = readText(raw);
       if (out) {
         if (generationShape !== label) {
           generationShape = label;
@@ -200,7 +222,20 @@ async function runGeneration(prompt, opts) {
         }
         return out;
       }
-      failures.push(`${label}: empty`);
+
+      // The call succeeded but the text is somewhere unexpected. Walk the object
+      // for the longest string so the response shape does not have to be guessed.
+      const found = deepestString(raw);
+      if (found.text && found.text.length > 20) {
+        generationShape = label;
+        spindle.log.info(`Lorebook Web Scraper: generation works via ${label}, text at ${found.path}`);
+        return found.text.trim();
+      }
+
+      const shape = raw && typeof raw === 'object'
+        ? `keys[${Object.keys(raw).join(',')}]`
+        : typeof raw;
+      failures.push(`${label}: no text, ${shape}`);
     } catch (err) {
       failures.push(`${label}: ${message(err)}`);
     }
