@@ -188,6 +188,7 @@ let generationShape = null;
 
 async function runGeneration(prompt, opts) {
   const o = opts || {};
+  opts = o;
   const gen = spindle.generate;
   if (!gen || typeof gen !== 'object') throw new Error('spindle.generate is unavailable.');
 
@@ -212,22 +213,32 @@ async function runGeneration(prompt, opts) {
 
   const methods = Object.keys(gen).filter((k) => typeof gen[k] === 'function');
   const order = ['quiet', 'raw', 'quietTracked', 'batch'].filter((m) => methods.includes(m));
-  const keys = o.connectionId
-    ? ['connectionId', 'connectionProfileId', 'profileId', 'connection', null]
-    : [null];
+
+  // connections.list on this build takes the user id as a bare first argument
+  // rather than inside an options object, so generation very likely does too.
+  // Positional shapes are tried first for that reason. The list is kept short:
+  // every failed attempt costs a round trip, and too many blow the host's
+  // interceptor deadline before a working shape is reached.
+  const withConn = (obj) => (opts.connectionId ? { ...obj, connectionId: opts.connectionId } : obj);
+  const bare = { messages: body.messages, maxTokens: body.maxTokens, temperature: body.temperature };
+
+  const buildVariants = (m) => [
+    [`${m}|userId,body+conn`, () => gen[m](opts.userId, withConn(bare))],
+    [`${m}|userId,body`, () => gen[m](opts.userId, bare)],
+    [`${m}|body.userId+conn`, () => gen[m](withConn({ ...bare, userId: opts.userId }))],
+    [`${m}|body.userId`, () => gen[m]({ ...bare, userId: opts.userId })],
+  ];
 
   const variants = [];
   if (generationShape) {
-    const [m, k] = generationShape.split('|');
+    const m = generationShape.split('|')[0];
     if (order.includes(m)) {
-      variants.push([generationShape, () => gen[m](k === 'null' ? { ...body } : { ...body, [k]: o.connectionId })]);
+      for (const v of buildVariants(m)) if (v[0] === generationShape) variants.push(v);
     }
   }
   for (const m of order) {
-    for (const k of keys) {
-      const label = `${m}|${k === null ? 'null' : k}`;
-      if (label === generationShape) continue;
-      variants.push([label, () => gen[m](k === null ? { ...body } : { ...body, [k]: o.connectionId })]);
+    for (const v of buildVariants(m)) {
+      if (v[0] !== generationShape) variants.push(v);
     }
   }
 
