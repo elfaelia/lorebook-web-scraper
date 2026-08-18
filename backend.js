@@ -138,6 +138,27 @@ async function resolveUserId(handlerUserId, payload) {
 
 
 
+
+/** Host error text can surface where content is expected; never treat it as output. */
+const ERROR_PHRASES = [
+  'deadline has expired',
+  'unknown provider',
+  'no connection profile',
+  'permission_denied',
+  'rate limit',
+  'timed out',
+  'timeout',
+  'request failed',
+  'internal error',
+];
+
+function looksLikeError(text) {
+  if (typeof text !== 'string') return false;
+  const t = text.trim().toLowerCase();
+  if (t.length > 400) return false;          // long output is real content
+  return ERROR_PHRASES.some((p) => t.includes(p));
+}
+
 /** Find the longest string anywhere in a response object, with its path. */
 function deepestString(value, path, depth) {
   const p = path || '$';
@@ -215,6 +236,10 @@ async function runGeneration(prompt, opts) {
     try {
       const raw = await run();
       const out = readText(raw);
+      if (out && looksLikeError(out)) {
+        failures.push(`${label}: host error "${out.trim().slice(0, 60)}"`);
+        continue;
+      }
       if (out) {
         if (generationShape !== label) {
           generationShape = label;
@@ -226,6 +251,10 @@ async function runGeneration(prompt, opts) {
       // The call succeeded but the text is somewhere unexpected. Walk the object
       // for the longest string so the response shape does not have to be guessed.
       const found = deepestString(raw);
+      if (found.text && looksLikeError(found.text)) {
+        failures.push(`${label}: host error "${found.text.trim().slice(0, 60)}"`);
+        continue;
+      }
       if (found.text && found.text.length > 20) {
         generationShape = label;
         spindle.log.info(`Lorebook Web Scraper: generation works via ${label}, text at ${found.path}`);
@@ -647,14 +676,14 @@ spindle.onFrontendMessage(async (payload, handlerUserId) => {
           '',
           'Note:',
           '"""',
-          content.slice(0, 8000),
+          content.slice(0, 2500),
           '"""',
         ].filter(Boolean).join('\n');
 
         let out = '';
         try {
           out = await runGeneration(prompt, {
-            maxTokens: 400, temperature: 0.5, connectionId, userId,
+            maxTokens: 220, temperature: 0.5, connectionId, userId,
           });
         } catch (err) {
           return fail(message(err));
