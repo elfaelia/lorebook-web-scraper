@@ -756,7 +756,7 @@ export function setup(ctx) {
     try {
       const d = await call('lws:diag', {}, 25000);
       log('— Setup check —');
-      log(`Frontend 2.6 · Backend ${d.backendVersion || 'older — it did not reload'}`);
+      log(`Frontend 2.7 · Backend ${d.backendVersion || 'older — it did not reload'}`);
       log(`generate: ${d.generateType} · ${d.generateMethods}`);
       log(`User ID: ${d.userId}`);
       log(`Granted: ${(d.granted || []).join(', ') || '(none)'}`);
@@ -823,7 +823,11 @@ export function setup(ctx) {
           <label>Group<input type="text" id="lwsv-group" placeholder="none" /></label>
           <button class="lws-btn" data-vact="setGroup">Apply</button>
         </div>
-        <p class="lws-hint">Entries sharing a group name compete, so only one fires per turn. Useful for capping a book that floods every slot.</p>
+        <div class="lws-row2">
+          <label>Slots per turn<input type="number" id="lwsv-slots" min="1" max="12" step="1" placeholder="1" /></label>
+          <button class="lws-btn" data-vact="splitGroups">Split</button>
+        </div>
+        <p class="lws-hint">One entry fires per group name. Apply sets a single shared group, capping the book at one per turn. Split spreads entries across that many numbered sub-groups instead, so the book contributes that many per turn. Clear the group box and Apply to remove grouping.</p>
         <div class="lws-row2">
           <label>Sticky<input type="number" id="lwsv-sticky" min="0" step="1" placeholder="0" /></label>
           <button class="lws-btn" data-vact="setSticky">Apply</button>
@@ -1098,6 +1102,46 @@ export function setup(ctx) {
       vLog(err.message);
     }
     button.disabled = false;
+  });
+
+
+  vWrap.querySelector('[data-vact="splitGroups"]').addEventListener('click', async () => {
+    const base = vVal('#lwsv-group');
+    const slots = Math.max(1, Math.min(12, Number(vVal('#lwsv-slots')) || 1));
+    if (!base) { vLog('Type a group name first, then choose how many slots.'); return; }
+    if (!vBookSelect.value) { vLog('Choose a lorebook first.'); return; }
+    if (!scanned.length) await vScan();
+
+    const targets = scanned.filter((e) => eligible(e) && (vOpt('onlyVectorized') ? e.vectorized : true));
+    if (!targets.length) { vLog('No entries matched.'); return; }
+    if (slots >= targets.length) {
+      vLog(`${targets.length} entries but ${slots} slots — grouping would do nothing. Use a smaller number.`);
+      return;
+    }
+
+    vLog(`Splitting ${targets.length} entries across ${slots} groups…`);
+    let done = 0;
+    let failed = 0;
+
+    // Round-robin so semantically similar neighbours land in different groups,
+    // which stops one group holding all the strong matches.
+    for (let i = 0; i < targets.length; i++) {
+      const groupName = `${base}-${(i % slots) + 1}`;
+      try {
+        await call('lws:update_entry', {
+          entryId: targets[i].id,
+          patch: { group_name: groupName },
+        }, 30000);
+        done++;
+      } catch (err) {
+        failed++;
+        if (failed <= 2) vLog(`  "${targets[i].comment}" failed — ${err.message}`);
+      }
+    }
+
+    vLog(`Split done: ${done} entries into ${base}-1 … ${base}-${slots}${failed ? `, ${failed} failed` : ''}.`);
+    vLog(`This book can now contribute up to ${slots} entries per turn.`);
+    await vScan();
   });
 
   vLoadBooks().then(vScan);
