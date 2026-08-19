@@ -221,6 +221,9 @@ function suggestKeywords(entry, limit) {
   return chosen.slice(0, max);
 }
 
+/** Marker separating an entry's own text from generated retrieval cues. */
+const CUE_START = '\n\n[cues]\n';
+
 /* ------------------------------------------------------------------ */
 /* Setup                                                               */
 /* ------------------------------------------------------------------ */
@@ -756,7 +759,7 @@ export function setup(ctx) {
     try {
       const d = await call('lws:diag', {}, 25000);
       log('— Setup check —');
-      log(`Frontend 2.19 · Backend ${d.backendVersion || 'older — it did not reload'}`);
+      log(`Frontend 2.21 · Backend ${d.backendVersion || 'older — it did not reload'}`);
       log(`generate: ${d.generateType} · ${d.generateMethods}`);
       log(`User ID: ${d.userId}`);
       log(`Granted: ${(d.granted || []).join(', ') || '(none)'}`);
@@ -844,6 +847,7 @@ export function setup(ctx) {
       <summary>Retrieval cues</summary>
       <div class="lws-secbody">
         <p class="lws-hint">Clinical or formal entries rarely match narrative chat, so they never surface. This appends a few plain-language lines describing what the topic looks like in a scene. The entry keeps its own voice; only the embedding shifts.</p>
+        <select id="lwsv-target"></select>
         <div class="lws-inline">
           <select id="lwsv-conn"></select>
           <button class="lws-btn lws-mini" data-vact="refreshVConn" title="Reload connections">↻</button>
@@ -902,6 +906,31 @@ export function setup(ctx) {
   const vOpt = (name) => vWrap.querySelector(`[data-vopt="${name}"]`).checked;
   const vVal = (id) => vWrap.querySelector(id).value.trim();
 
+  function renderTargets() {
+    const sel = vWrap.querySelector('#lwsv-target');
+    if (!sel) return;
+    const keep = sel.value;
+    sel.innerHTML = '';
+
+    const add = (value, label) => {
+      const o = document.createElement('option');
+      o.value = value;
+      o.textContent = label;
+      sel.appendChild(o);
+    };
+
+    const without = scanned.filter((e) => !String(e.content || '').includes(CUE_START)).length;
+    add('__missing__', `All entries without cues (${without})`);
+    add('__all__', `All entries, replacing any cues (${scanned.length})`);
+
+    for (const entry of scanned) {
+      const has = String(entry.content || '').includes(CUE_START);
+      add(entry.id, `${has ? '✓ ' : ''}${entry.comment}`);
+    }
+
+    if (keep && [...sel.options].some((o) => o.value === keep)) sel.value = keep;
+  }
+
   function renderStats() {
     if (!scanned.length) { vStats.innerHTML = ''; return; }
     const vec = scanned.filter((e) => e.vectorized).length;
@@ -939,6 +968,7 @@ export function setup(ctx) {
       const result = await call('lws:list_entries', { bookId }, 60000);
       scanned = result.entries || [];
       renderStats();
+      renderTargets();
     } catch (err) {
       vLog(err.message);
       scanned = [];
@@ -1161,16 +1191,17 @@ export function setup(ctx) {
   });
 
 
-  const CUE_START = '\n\n[cues]\n';
 
   vWrap.querySelector('[data-vact="ungroup"]').addEventListener('click', () => {
     applyToAll('Remove grouping', () => ({ group_name: '' }), () => true);
   });
 
   vWrap.querySelector('[data-vact="stripCues"]').addEventListener('click', () => {
+    const choice = vWrap.querySelector('#lwsv-target').value || '__missing__';
+    const single = choice !== '__missing__' && choice !== '__all__' ? choice : null;
     applyToAll('Remove cues', (entry) => ({
       content: String(entry.content || '').split(CUE_START)[0].trimEnd(),
-    }), (e) => String(e.content || '').includes(CUE_START));
+    }), (e) => String(e.content || '').includes(CUE_START) && (!single || e.id === single));
   });
 
   let cuePreview = new Map();
@@ -1181,11 +1212,21 @@ export function setup(ctx) {
     if (!scanned.length) await vScan();
 
     const style = vVal('#lwsv-style');
-    const targets = scanned.filter((x) => eligible(x)
-      && (vOpt('onlyVectorized') ? x.vectorized : true)
-      && !String(x.content || '').includes(CUE_START));
+    const choice = vWrap.querySelector('#lwsv-target').value || '__missing__';
 
-    if (!targets.length) { vLog('Every entry already has cues, or none matched.'); return; }
+    let targets;
+    if (choice === '__missing__') {
+      targets = scanned.filter((x) => eligible(x)
+        && (vOpt('onlyVectorized') ? x.vectorized : true)
+        && !String(x.content || '').includes(CUE_START));
+    } else if (choice === '__all__') {
+      targets = scanned.filter((x) => eligible(x)
+        && (vOpt('onlyVectorized') ? x.vectorized : true));
+    } else {
+      targets = scanned.filter((x) => x.id === choice);
+    }
+
+    if (!targets.length) { vLog('Nothing matched that selection.'); return; }
 
     const button = e.currentTarget;
     button.disabled = true;
@@ -1232,7 +1273,9 @@ export function setup(ctx) {
       try {
         await call('lws:update_entry', {
           entryId: entry.id,
-          patch: { content: `${String(entry.content).trimEnd()}${CUE_START}${cues.join('\n')}` },
+          patch: {
+            content: `${String(entry.content).split(CUE_START)[0].trimEnd()}${CUE_START}${cues.join('\n')}`,
+          },
         }, 30000);
         done++;
       } catch (err) {
