@@ -698,6 +698,7 @@ spindle.onFrontendMessage(async (payload, handlerUserId) => {
         if (!content) return fail('Entry has no content to expand.');
 
         const setting = style || 'close third-person literary fiction between two people';
+        const angle = String(payload.angle || '').trim();
         const temp = typeof payload.temperature === 'number' ? payload.temperature : 0.3;
 
         const prompt = [
@@ -714,14 +715,20 @@ spindle.onFrontendMessage(async (payload, handlerUserId) => {
           '- Concrete and specific: the actual behaviour, the actual reaction, the actual object.',
           '- Vocabulary a reader would recognise, not invented or ornamental phrasing.',
           '',
+          'If the note describes a named study or experiment, write about the PRINCIPLE it',
+          'demonstrates, not the study itself. Ignore its apparatus, subjects, materials and',
+          'setting entirely, however much of the note they take up. A note about a conditioning',
+          'experiment should yield cues about conditioned fear spreading to similar things,',
+          'not cues about the animal or object that study happened to use.',
+          '',
           'Do not write:',
           '- Lyrical or poetic phrasing, metaphor, or unusual word choices.',
           '- Vague stand-ins like "whatever warm thing" or "something soft". Name it.',
-          '- Restagings of specific historical studies inside the setting above. Describe the',
-          '  general phenomenon the note is about, in language that fits the setting.',
+          '- The props, species, equipment or participants of any experiment in the note.',
           '- Clinical terms, jargon, definitions, headings, numbering, or quotation marks.',
           '- Anything anachronistic to the setting.',
           '',
+          angle ? `Centre the cues on this specifically: ${angle}` : '',
           `Produce 4 to 6 lines, each under sixteen words, each a different aspect of ${title}.`,
           'Output only the lines.',
           '',
@@ -729,7 +736,7 @@ spindle.onFrontendMessage(async (payload, handlerUserId) => {
           '"""',
           content.slice(0, 2500),
           '"""',
-        ].join('\n');
+        ].filter(Boolean).join('\n');
 
         let out = '';
         try {

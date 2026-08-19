@@ -761,7 +761,7 @@ export function setup(ctx) {
     try {
       const d = await call('lws:diag', {}, 25000);
       log('— Setup check —');
-      log(`Frontend 2.23 · Backend ${d.backendVersion || 'older — it did not reload'}`);
+      log(`Frontend 2.24 · Backend ${d.backendVersion || 'older — it did not reload'}`);
       log(`generate: ${d.generateType} · ${d.generateMethods}`);
       log(`User ID: ${d.userId}`);
       log(`Granted: ${(d.granted || []).join(', ') || '(none)'}`);
@@ -863,6 +863,7 @@ export function setup(ctx) {
         <button class="lws-btn lws-btn-primary" data-vact="previewCues">Preview cues</button>
         <button class="lws-btn" data-vact="saveCues">Save previewed cues</button>
         <button class="lws-btn" data-vact="stripCues">Remove cues</button>
+        <button class="lws-btn" data-vact="refreshCache">Clear stale token cache</button>
       </div>
     </details>
 
@@ -897,6 +898,23 @@ export function setup(ctx) {
     </details>
   `;
   vectorTab.root.appendChild(vWrap);
+
+
+  /**
+   * Lumiverse caches a token count and a content hash inside each entry's
+   * extensions field. Writing new content without clearing that cache leaves a
+   * hash describing text that no longer exists, which appears to leave the entry
+   * neither fresh nor eligible for reindexing. Drop the stale keys so the host
+   * recomputes them.
+   */
+  function withoutTokenCache(extensions) {
+    const out = {};
+    for (const [k, v] of Object.entries(extensions || {})) {
+      if (k.startsWith('_lumiverse_token_count')) continue;
+      out[k] = v;
+    }
+    return out;
+  }
 
   const vBookSelect = vWrap.querySelector('#lwsv-book');
   const vStatus = vWrap.querySelector('#lwsv-status');
@@ -1047,7 +1065,7 @@ export function setup(ctx) {
       keysecondary: [],
       selective: false,
       extensions: {
-        ...entry.extensions,
+        ...withoutTokenCache(entry.extensions),
         lws_original_keys: {
           key: entry.key,
           keysecondary: entry.keysecondary,
@@ -1060,7 +1078,7 @@ export function setup(ctx) {
   vWrap.querySelector('[data-vact="restore"]').addEventListener('click', () => {
     applyToAll('Restore keywords', (entry) => {
       const backup = entry.extensions.lws_original_keys || {};
-      const rest = { ...entry.extensions };
+      const rest = withoutTokenCache(entry.extensions);
       delete rest.lws_original_keys;
       const patch = {
         key: Array.isArray(backup.key) ? backup.key : [],
@@ -1115,6 +1133,14 @@ export function setup(ctx) {
       }
       return { key: merged };
     }, (e) => suggestions.has(e.id));
+  });
+
+  vWrap.querySelector('[data-vact="refreshCache"]').addEventListener('click', () => {
+    applyToAll(
+      'Clear cached token counts',
+      (entry) => ({ extensions: withoutTokenCache(entry.extensions) }),
+      (e) => Object.keys(e.extensions || {}).some((k) => k.startsWith('_lumiverse_token_count')),
+    );
   });
 
   vWrap.querySelector('[data-vact="inspect"]').addEventListener('click', async () => {
@@ -1208,6 +1234,7 @@ export function setup(ctx) {
     const single = choice !== '__missing__' && choice !== '__all__' ? choice : null;
     applyToAll('Remove cues', (entry) => ({
       content: String(entry.content || '').split(CUE_START)[0].trimEnd(),
+      extensions: withoutTokenCache(entry.extensions),
     }), (e) => String(e.content || '').includes(CUE_START) && (!single || e.id === single));
   });
 
@@ -1284,6 +1311,7 @@ export function setup(ctx) {
           entryId: entry.id,
           patch: {
             content: `${String(entry.content).split(CUE_START)[0].trimEnd()}${CUE_START}${cues.join('\n')}`,
+            extensions: withoutTokenCache(entry.extensions),
           },
         }, 30000);
         done++;
