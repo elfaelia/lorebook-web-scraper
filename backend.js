@@ -696,27 +696,35 @@ spindle.onFrontendMessage(async (payload, handlerUserId) => {
         const style = String(payload.style || '');
         if (!content) return fail('Entry has no content to expand.');
 
+        const setting = style || 'close third-person literary fiction between two people';
+
         const prompt = [
-          'You are improving how a reference note is found by semantic search.',
+          'You are writing retrieval cues that help a reference note surface during fiction.',
           '',
-          'The note below is written in formal clinical prose. The conversations that should surface it',
-          'are informal narrative fiction, so the wording never overlaps and the note is never retrieved.',
-          'Write retrieval cues that bridge that gap.',
+          `SETTING, and this governs everything below: ${setting}`,
           '',
-          `Produce 4 to 6 short lines describing concrete situations, behaviours and phrasings that mean`,
-          `${title} is happening, as they would actually appear in a scene rather than in a textbook.`,
-          'Use plain narrative language: what someone does, says, feels, or notices.',
-          'No clinical terms, no jargon, no definitions, no headings, no numbering.',
-          'One situation per line, under fifteen words each.',
-          style ? `Setting for context: ${style}` : '',
+          'The note is written in clinical prose. The scenes that should surface it are narrative',
+          'fiction in the setting above. Write short lines that read like moments lifted straight',
+          'out of that fiction, so the note matches the way those scenes are actually written.',
           '',
-          'Output only those lines, nothing else.',
+          `Produce 4 to 6 lines showing ${title} as it appears in a scene.`,
+          '',
+          'Requirements:',
+          '- Write in the register, period and world of the setting. Nothing outside it.',
+          '- Two people in a room, or one person alone. Concrete physical detail.',
+          '- No modern life: no workplaces, offices, managers, schools, phones, therapy sessions,',
+          '  training, parenting, pets, coffee, screens, or anything post-dating the setting.',
+          '- No generic illustrative examples. These are not textbook cases, they are scene fragments.',
+          '- No clinical terms, no jargon, no definitions, no headings, no numbering, no quotation marks.',
+          '- One moment per line, under eighteen words.',
+          '',
+          'Output only those lines.',
           '',
           'Note:',
           '"""',
           content.slice(0, 2500),
           '"""',
-        ].filter(Boolean).join('\n');
+        ].join('\n');
 
         let out = '';
         try {
