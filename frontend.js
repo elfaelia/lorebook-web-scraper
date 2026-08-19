@@ -427,6 +427,7 @@ export function setup(ctx) {
       <div class="lws-inline">
         <label class="lws-num2">aim<input type="number" id="lws-target" min="50" step="25" value="250" /></label>
         <label class="lws-num2">max<input type="number" id="lws-hard" min="50" step="25" value="320" /></label>
+        <label class="lws-num2">temp<input type="number" id="lws-temp" min="0" max="1" step="0.1" value="0.3" /></label>
         <button class="lws-btn lws-btn-primary" data-act="condense">Condense</button>
         <button class="lws-btn" data-act="revert">Revert</button>
       </div>
@@ -609,6 +610,7 @@ export function setup(ctx) {
         title: page.title,
         targetTokens: Number($('#lws-target').value) || 250,
         hardLimit: Number($('#lws-hard').value) || undefined,
+        temperature: Number($('#lws-temp').value),
         focus: $('#lws-focus').value.trim() || undefined,
         focusMode: $('#lws-focusmode').value,
         connectionId: connSelect.value || undefined,
@@ -759,7 +761,7 @@ export function setup(ctx) {
     try {
       const d = await call('lws:diag', {}, 25000);
       log('— Setup check —');
-      log(`Frontend 2.21 · Backend ${d.backendVersion || 'older — it did not reload'}`);
+      log(`Frontend 2.22 · Backend ${d.backendVersion || 'older — it did not reload'}`);
       log(`generate: ${d.generateType} · ${d.generateMethods}`);
       log(`User ID: ${d.userId}`);
       log(`Granted: ${(d.granted || []).join(', ') || '(none)'}`);
@@ -853,6 +855,10 @@ export function setup(ctx) {
           <button class="lws-btn lws-mini" data-vact="refreshVConn" title="Reload connections">↻</button>
         </div>
         <input id="lwsv-style" placeholder="Setting, optional — e.g. 1959 institutional psychiatry" />
+        <div class="lws-row2">
+          <label>Temperature<input type="number" id="lwsv-temp" min="0" max="1" step="0.1" value="0.3" /></label>
+          <span class="lws-hint" style="flex:2;">Lower is plainer and more literal. Raise it only if cues feel repetitive.</span>
+        </div>
         <button class="lws-btn lws-btn-primary" data-vact="previewCues">Preview cues</button>
         <button class="lws-btn" data-vact="saveCues">Save previewed cues</button>
         <button class="lws-btn" data-vact="stripCues">Remove cues</button>
@@ -1240,6 +1246,7 @@ export function setup(ctx) {
           content: entry.content,
           title: entry.comment,
           style: style || undefined,
+          temperature: Number(vVal('#lwsv-temp')),
           connectionId: vConnSelect.value || undefined,
         }, 90000);
 
