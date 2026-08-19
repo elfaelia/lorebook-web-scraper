@@ -761,7 +761,7 @@ export function setup(ctx) {
     try {
       const d = await call('lws:diag', {}, 25000);
       log('— Setup check —');
-      log(`Frontend 2.22 · Backend ${d.backendVersion || 'older — it did not reload'}`);
+      log(`Frontend 2.23 · Backend ${d.backendVersion || 'older — it did not reload'}`);
       log(`generate: ${d.generateType} · ${d.generateMethods}`);
       log(`User ID: ${d.userId}`);
       log(`Granted: ${(d.granted || []).join(', ') || '(none)'}`);
@@ -855,6 +855,7 @@ export function setup(ctx) {
           <button class="lws-btn lws-mini" data-vact="refreshVConn" title="Reload connections">↻</button>
         </div>
         <input id="lwsv-style" placeholder="Setting, optional — e.g. 1959 institutional psychiatry" />
+        <input id="lwsv-angle" placeholder="Angle, optional — e.g. the mechanism, not the experiment" />
         <div class="lws-row2">
           <label>Temperature<input type="number" id="lwsv-temp" min="0" max="1" step="0.1" value="0.3" /></label>
           <span class="lws-hint" style="flex:2;">Lower is plainer and more literal. Raise it only if cues feel repetitive.</span>
@@ -1246,6 +1247,7 @@ export function setup(ctx) {
           content: entry.content,
           title: entry.comment,
           style: style || undefined,
+          angle: vVal('#lwsv-angle') || undefined,
           temperature: Number(vVal('#lwsv-temp')),
           connectionId: vConnSelect.value || undefined,
         }, 90000);

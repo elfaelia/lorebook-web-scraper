@@ -571,6 +571,7 @@ spindle.onFrontendMessage(async (payload, handlerUserId) => {
         const focus = String(payload.focus || '').trim();
         if (!text) return fail('Nothing to condense.');
 
+        const condenseTemp = typeof payload.temperature === 'number' ? payload.temperature : 0.3;
         const hardLimit = Number(payload.hardLimit) || Math.ceil(targetTokens * 1.25);
         const aimWords = Math.round(targetTokens * 0.72);
         const maxWords = Math.round(hardLimit * 0.72);
@@ -632,7 +633,7 @@ spindle.onFrontendMessage(async (payload, handlerUserId) => {
         let condensed = '';
         try {
           condensed = await runGeneration(prompt, {
-            maxTokens, temperature: 0.3, connectionId, userId,
+            maxTokens, temperature: condenseTemp, connectionId, userId,
           });
         } catch (err) {
           return fail(message(err));
@@ -697,28 +698,32 @@ spindle.onFrontendMessage(async (payload, handlerUserId) => {
         if (!content) return fail('Entry has no content to expand.');
 
         const setting = style || 'close third-person literary fiction between two people';
+        const temp = typeof payload.temperature === 'number' ? payload.temperature : 0.3;
 
         const prompt = [
-          'You are writing retrieval cues that help a reference note surface during fiction.',
+          'Write retrieval cues: short lines that help a reference note surface during fiction.',
           '',
-          `SETTING, and this governs everything below: ${setting}`,
+          `The fiction is set in: ${setting}`,
           '',
-          'The note is written in clinical prose. The scenes that should surface it are narrative',
-          'fiction in the setting above. Write short lines that read like moments lifted straight',
-          'out of that fiction, so the note matches the way those scenes are actually written.',
+          `Describe how ${title} shows up in a scene, using the plain concrete words a writer`,
+          'would actually use for it. The cues exist to be matched against narrative prose, so they',
+          'should read like ordinary description, not like literature.',
           '',
-          `Produce 4 to 6 lines showing ${title} as it appears in a scene.`,
+          'Write:',
+          '- Plain declarative sentences. Subject, verb, object.',
+          '- Concrete and specific: the actual behaviour, the actual reaction, the actual object.',
+          '- Vocabulary a reader would recognise, not invented or ornamental phrasing.',
           '',
-          'Requirements:',
-          '- Write in the register, period and world of the setting. Nothing outside it.',
-          '- Two people in a room, or one person alone. Concrete physical detail.',
-          '- No modern life: no workplaces, offices, managers, schools, phones, therapy sessions,',
-          '  training, parenting, pets, coffee, screens, or anything post-dating the setting.',
-          '- No generic illustrative examples. These are not textbook cases, they are scene fragments.',
-          '- No clinical terms, no jargon, no definitions, no headings, no numbering, no quotation marks.',
-          '- One moment per line, under eighteen words.',
+          'Do not write:',
+          '- Lyrical or poetic phrasing, metaphor, or unusual word choices.',
+          '- Vague stand-ins like "whatever warm thing" or "something soft". Name it.',
+          '- Restagings of specific historical studies inside the setting above. Describe the',
+          '  general phenomenon the note is about, in language that fits the setting.',
+          '- Clinical terms, jargon, definitions, headings, numbering, or quotation marks.',
+          '- Anything anachronistic to the setting.',
           '',
-          'Output only those lines.',
+          `Produce 4 to 6 lines, each under sixteen words, each a different aspect of ${title}.`,
+          'Output only the lines.',
           '',
           'Note:',
           '"""',
@@ -729,7 +734,7 @@ spindle.onFrontendMessage(async (payload, handlerUserId) => {
         let out = '';
         try {
           out = await runGeneration(prompt, {
-            maxTokens: 220, temperature: 0.5, connectionId, userId,
+            maxTokens: 220, temperature: temp, connectionId, userId,
           });
         } catch (err) {
           return fail(message(err));
