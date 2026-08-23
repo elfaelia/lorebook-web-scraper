@@ -1,3 +1,6 @@
+/** Single source of truth for the backend build, reported by Check setup. */
+const VERSION = '2.29.0';
+
 /**
  * Lorebook Web Scraper — backend module. v2.0
  *
@@ -211,6 +214,24 @@ async function runGeneration(prompt, opts) {
     : ''
   ).trim();
 
+  // Resolve the connection profile. quiet() can resolve its own, but raw() needs
+  // provider and model, and reporting the fields helps when a call is rejected.
+  let profile = null;
+  try {
+    const listed = await spindle.connections.list(o.userId);
+    const rows = Array.isArray(listed) ? listed
+      : listed && Array.isArray(listed.data) ? listed.data
+      : listed && Array.isArray(listed.connections) ? listed.connections : [];
+    profile = (o.connectionId && rows.find((c) => c && c.id === o.connectionId))
+      || rows.find((c) => c && (c.is_default || c.isDefault || c.isActive))
+      || rows[0]
+      || null;
+  } catch (err) {
+    spindle.log.error(`Lorebook Web Scraper: connections.list failed - ${message(err)}`);
+  }
+
+  const profileFields = profile ? Object.keys(profile).join(',') : 'none';
+
   const methods = Object.keys(gen).filter((k) => typeof gen[k] === 'function');
   const order = ['quiet', 'raw'].filter((m) => methods.includes(m));
 
@@ -314,7 +335,7 @@ spindle.onFrontendMessage(async (payload, handlerUserId) => {
 
         return reply({
           type: 'lws:diag_result',
-          backendVersion: '2.3.0',
+          backendVersion: VERSION,
           generateType: typeof spindle.generate,
           generateMethods: (spindle.generate && typeof spindle.generate === 'object')
             ? Object.keys(spindle.generate).filter((k) => typeof spindle.generate[k] === 'function').join(', ')
@@ -942,4 +963,4 @@ if (typeof spindle.registerMessageContentProcessor === 'function') {
 }
 
 
-spindle.log.info('Lorebook Web Scraper backend ready (v2.11). Continue fix registered.');
+spindle.log.info(`Lorebook Web Scraper backend ready (v${VERSION}). Continue fix registered.`);

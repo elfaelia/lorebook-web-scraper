@@ -1,5 +1,5 @@
 /**
- * Lorebook Web Scraper — frontend module. v1.9
+ * Lorebook Web Scraper — frontend module. v2.29
  *
  * Registers a drawer tab. Pick a lorebook, paste URLs, press the button.
  * Each page is fetched by the backend through the CORS proxy, converted to
@@ -220,6 +220,9 @@ function suggestKeywords(entry, limit) {
 
   return chosen.slice(0, max);
 }
+
+/** Single source of truth for the frontend build. */
+const FRONTEND_VERSION = '2.29.0';
 
 /** Marker separating an entry's own text from generated retrieval cues. */
 const CUE_START = '\n\n[cues]\n';
@@ -761,7 +764,7 @@ export function setup(ctx) {
     try {
       const d = await call('lws:diag', {}, 25000);
       log('— Setup check —');
-      log(`Frontend 2.28 · Backend ${d.backendVersion || 'older — it did not reload'}`);
+      log(`Frontend ${FRONTEND_VERSION} · Backend ${d.backendVersion || 'older — it did not reload'}`);
       log(`generate: ${d.generateType} · ${d.generateMethods}`);
       log(`User ID: ${d.userId}`);
       log(`Granted: ${(d.granted || []).join(', ') || '(none)'}`);
