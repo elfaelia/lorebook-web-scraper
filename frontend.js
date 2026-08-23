@@ -761,7 +761,7 @@ export function setup(ctx) {
     try {
       const d = await call('lws:diag', {}, 25000);
       log('— Setup check —');
-      log(`Frontend 2.25 · Backend ${d.backendVersion || 'older — it did not reload'}`);
+      log(`Frontend 2.27 · Backend ${d.backendVersion || 'older — it did not reload'}`);
       log(`generate: ${d.generateType} · ${d.generateMethods}`);
       log(`User ID: ${d.userId}`);
       log(`Granted: ${(d.granted || []).join(', ') || '(none)'}`);
@@ -1354,166 +1354,12 @@ export function setup(ctx) {
   vLoadConnections();
 
 
-  /* ---------------------------------------------------------------- */
-  /* Words tab                                                         */
-  /* ---------------------------------------------------------------- */
-
-  const WORDS_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16"/><path d="M4 12h10"/><path d="M4 17h7"/><path d="m16 14 5 5"/><path d="m21 14-5 5"/></svg>';
-
-  const wordsTab = ctx.ui.registerDrawerTab({
-    id: 'words',
-    title: 'Banned Phrases',
-    shortName: 'Words',
-    headerTitle: 'Banned Phrases',
-    description: 'Rewrite verbal tics out of replies',
-    keywords: ['banned', 'words', 'phrases', 'tics', 'slop', 'rewrite'],
-    iconSvg: WORDS_ICON,
-  });
-
-  const wWrap = document.createElement('div');
-  wWrap.className = 'lws-wrap';
-  wWrap.innerHTML = `
-    <div class="lws-statusbar">
-      <span>Banned phrases</span>
-      <button class="lws-btn lws-mini" data-wact="add">Add</button>
-      <button class="lws-btn lws-mini" data-wact="save">Save</button>
-    </div>
-    <div class="lws-status" id="lwsw-status"></div>
-
-    <p class="lws-hint">Rewrite mode sends only the offending sentence to a model and asks for a
-    different construction, so the shape of the phrasing changes rather than one word. Swap mode
-    picks at random from your alternatives — instant and free, but the sentence keeps its shape.</p>
-
-    <div id="lwsw-list"></div>
-
-    <details class="lws-sec">
-      <summary>Test</summary>
-      <div class="lws-secbody">
-        <textarea id="lwsw-test" rows="3" placeholder="Paste a line to see what would change"></textarea>
-        <button class="lws-btn" data-wact="test">Run test</button>
-      </div>
-    </details>
-  `;
-  wordsTab.root.appendChild(wWrap);
-
-  const wStatus = wWrap.querySelector('#lwsw-status');
-  const wList = wWrap.querySelector('#lwsw-list');
-  let wFirst = true;
-  let rules = [];
-
-  function wLog(text) {
-    if (wFirst) { wStatus.textContent = ''; wFirst = false; }
-    appendLine(wStatus, text);
-  }
-
-  function renderRules() {
-    wList.innerHTML = '';
-    if (!rules.length) {
-      const empty = document.createElement('p');
-      empty.className = 'lws-hint';
-      empty.textContent = 'No rules yet. Press Add.';
-      wList.appendChild(empty);
-      return;
-    }
-
-    rules.forEach((rule, index) => {
-      const box = document.createElement('details');
-      box.className = 'lws-sec';
-      box.innerHTML = `
-        <summary>${rule.pattern || '(new rule)'}${rule.enabled === false ? ' — off' : ''}</summary>
-        <div class="lws-secbody">
-          <label class="lws-field"><span>Word or phrase</span>
-            <input data-f="pattern" value="${(rule.pattern || '').replace(/"/g, '&quot;')}" /></label>
-          <label class="lws-field"><span>Mode</span>
-            <select data-f="mode">
-              <option value="rewrite">Rewrite the sentence</option>
-              <option value="swap">Swap for an alternative</option>
-            </select></label>
-          <label class="lws-field"><span>Alternatives for swap mode, comma separated</span>
-            <input data-f="replacements" value="${(rule.replacements || []).join(', ').replace(/"/g, '&quot;')}" /></label>
-          <label class="lws-field"><span>Also avoid in rewrites, comma separated</span>
-            <input data-f="alsoAvoid" value="${(rule.alsoAvoid || []).join(', ').replace(/"/g, '&quot;')}" /></label>
-          <label class="lws-field"><span>Guidance for rewrites, optional</span>
-            <input data-f="note" value="${(rule.note || '').replace(/"/g, '&quot;')}" /></label>
-          <label class="lws-chk"><input type="checkbox" data-f="enabled"> Enabled</label>
-          <label class="lws-chk"><input type="checkbox" data-f="exact"> Exact word only, no inflections</label>
-          <label class="lws-chk"><input type="checkbox" data-f="regex"> Treat as a regular expression</label>
-          <button class="lws-btn" data-wact="remove">Delete this rule</button>
-        </div>
-      `;
-
-      box.querySelector('[data-f="mode"]').value = rule.mode || 'rewrite';
-      box.querySelector('[data-f="enabled"]').checked = rule.enabled !== false;
-      box.querySelector('[data-f="exact"]').checked = !!rule.exact;
-      box.querySelector('[data-f="regex"]').checked = !!rule.regex;
-
-      box.addEventListener('input', () => {
-        const get = (f) => box.querySelector(`[data-f="${f}"]`);
-        const listOf = (v) => v.split(',').map((x) => x.trim()).filter(Boolean);
-        rules[index] = {
-          pattern: get('pattern').value.trim(),
-          mode: get('mode').value,
-          replacements: listOf(get('replacements').value),
-          alsoAvoid: listOf(get('alsoAvoid').value),
-          note: get('note').value.trim(),
-          enabled: get('enabled').checked,
-          exact: get('exact').checked,
-          regex: get('regex').checked,
-        };
-      });
-
-      box.querySelector('[data-wact="remove"]').addEventListener('click', () => {
-        rules.splice(index, 1);
-        renderRules();
-      });
-
-      wList.appendChild(box);
-    });
-  }
-
-  wWrap.querySelector('[data-wact="add"]').addEventListener('click', () => {
-    rules.push({ pattern: '', mode: 'rewrite', replacements: [], alsoAvoid: [], enabled: true });
-    renderRules();
-  });
-
-  wWrap.querySelector('[data-wact="save"]').addEventListener('click', async () => {
-    const clean = rules.filter((r) => r.pattern);
-    try {
-      await call('lws:set_banned', { rules: clean }, 25000);
-      rules = clean;
-      renderRules();
-      wLog(`Saved ${clean.length} rule${clean.length === 1 ? '' : 's'}.`);
-    } catch (err) {
-      wLog(err.message);
-    }
-  });
-
-  wWrap.querySelector('[data-wact="test"]').addEventListener('click', async (e) => {
-    const text = wWrap.querySelector('#lwsw-test').value.trim();
-    if (!text) { wLog('Paste a line to test first.'); return; }
-    const button = e.currentTarget;
-    button.disabled = true;
-    try {
-      const res = await call('lws:test_banned', { text }, 90000);
-      wLog(`${res.swaps} swaps, ${res.rewrites} rewrites:`);
-      wLog(res.text);
-    } catch (err) {
-      wLog(err.message);
-    }
-    button.disabled = false;
-  });
-
-  call('lws:get_banned', {}, 25000)
-    .then((res) => { rules = res.rules || []; renderRules(); })
-    .catch((err) => wLog(err.message));
-
   return () => {
     for (const entry of pending.values()) clearTimeout(entry.timer);
     pending.clear();
     unsubscribe();
     tab.destroy();
     vectorTab.destroy();
-    wordsTab.destroy();
     removeStyle();
     ctx.dom.cleanup();
   };
