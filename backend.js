@@ -756,6 +756,20 @@ spindle.onFrontendMessage(async (payload, handlerUserId) => {
         return reply({ type: 'lws:expanded', cues });
       }
 
+      case 'lws:get_banned': {
+        return reply({ type: 'lws:banned', rules: await readBanned() });
+      }
+
+      case 'lws:set_banned': {
+        await writeBanned(payload.rules || []);
+        return reply({ type: 'lws:banned_saved', count: (payload.rules || []).length });
+      }
+
+      case 'lws:test_banned': {
+        const result = await applyBanned(String(payload.text || ''), userId);
+        return reply({ type: 'lws:banned_tested', ...result });
+      }
+
       default:
         return;
     }
@@ -937,11 +951,20 @@ function stripTrailingBoard(text) {
 if (typeof spindle.registerMessageContentProcessor === 'function') {
   spindle.registerMessageContentProcessor(async (content, context) => {
     try {
-      if (!context || context.generationType !== 'continue') return content;
       if (typeof content !== 'string') return content;
-      const { text, cut } = stripTrailingBoard(content);
-      if (cut > 0) spindle.log.info(`[continue] removed ${cut} chars of duplicated status board`);
-      return text;
+
+      let working = content;
+      if (context && context.generationType === 'continue') {
+        const { text, cut } = stripTrailingBoard(working);
+        if (cut > 0) spindle.log.info(`[continue] removed ${cut} chars of duplicated status board`);
+        working = text;
+      }
+
+      const cleaned = await applyBanned(working, context && context.userId);
+      if (cleaned.swaps || cleaned.rewrites) {
+        spindle.log.info(`[banned] ${cleaned.swaps} swaps, ${cleaned.rewrites} rewrites`);
+      }
+      return cleaned.text;
     } catch (err) {
       spindle.log.error(`[continue] board strip failed - ${message(err)}`);
       return content;
@@ -950,6 +973,136 @@ if (typeof spindle.registerMessageContentProcessor === 'function') {
   spindle.log.info('Lorebook Web Scraper: continue board stripper registered.');
 } else {
   spindle.log.info('Lorebook Web Scraper: registerMessageContentProcessor unavailable; board stripping disabled.');
+}
+
+
+/* ------------------------------------------------------------------ */
+/* Banned phrases                                                      */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Post-generation cleanup for verbal tics. A rule can swap its pattern for a
+ * random alternative, or - better when the habit is a construction rather than
+ * one word - have the whole sentence rewritten by a cheap model, so the shape
+ * of the phrasing changes instead of a single word inside it.
+ *
+ * Only sentences that actually contain a banned pattern go anywhere, so a clean
+ * message costs nothing.
+ */
+
+const BANNED_KEY = 'banned-phrases.json';
+let bannedCache = null;
+
+async function readBanned() {
+  if (bannedCache) return bannedCache;
+  try {
+    bannedCache = JSON.parse(await spindle.storage.read(BANNED_KEY)) || [];
+  } catch (e) {
+    bannedCache = [];
+  }
+  if (!Array.isArray(bannedCache)) bannedCache = [];
+  return bannedCache;
+}
+
+async function writeBanned(list) {
+  bannedCache = Array.isArray(list) ? list : [];
+  await spindle.storage.write(BANNED_KEY, JSON.stringify(bannedCache));
+}
+
+function escapeRegex(text) {
+  return String(text).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/** Split into sentences, keeping trailing punctuation and spacing intact. */
+function splitSentences(text) {
+  return String(text).match(/[^.!?\n]+[.!?]*\s*|\n+/g) || [String(text)];
+}
+
+function matcherFor(rule) {
+  // Plain patterns match their own inflections too, so "clock" catches clocks,
+  // clocked and clocking. A trailing wildcard is only added to the final word.
+  const body = rule.regex
+    ? rule.pattern
+    : '\\b' + escapeRegex(rule.pattern) + (rule.exact ? '' : '\\w*') + '\\b';
+  return new RegExp(body, rule.caseSensitive ? 'g' : 'gi');
+}
+
+function pickReplacement(rule) {
+  const list = Array.isArray(rule.replacements) ? rule.replacements.filter(Boolean) : [];
+  if (!list.length) return null;
+  return list[Math.floor(Math.random() * list.length)];
+}
+
+async function applyBanned(text, userId) {
+  const rules = await readBanned();
+  const active = rules.filter((r) => r && r.pattern && r.enabled !== false);
+  if (!active.length || typeof text !== 'string' || !text.trim()) {
+    return { text, swaps: 0, rewrites: 0 };
+  }
+
+  let working = text;
+  let swaps = 0;
+
+  for (const rule of active.filter((r) => r.mode === 'swap')) {
+    working = working.replace(matcherFor(rule), () => {
+      const pick = pickReplacement(rule);
+      if (pick === null) return rule.pattern;
+      swaps++;
+      return pick;
+    });
+  }
+
+  const rewriteRules = active.filter((r) => r.mode !== 'swap');
+  if (!rewriteRules.length) return { text: working, swaps, rewrites: 0 };
+
+  const sentences = splitSentences(working);
+  let rewrites = 0;
+  const maxRewrites = 3;
+
+  for (let i = 0; i < sentences.length && rewrites < maxRewrites; i++) {
+    const sentence = sentences[i];
+    if (!sentence.trim() || sentence.trim().length < 8) continue;
+
+    const hit = rewriteRules.find((r) => matcherFor(r).test(sentence));
+    if (!hit) continue;
+
+    const avoid = [hit.pattern].concat(Array.isArray(hit.alsoAvoid) ? hit.alsoAvoid : [])
+      .filter(Boolean).join(', ');
+
+    const prompt = [
+      'Rewrite the sentence below to avoid a phrasing habit, keeping its meaning,',
+      'voice, tense and register exactly as they are.',
+      '',
+      'Must not appear in your rewrite, in any form or inflection: ' + avoid,
+      hit.note ? 'Additional guidance: ' + hit.note : '',
+      '',
+      'Change the construction, not just the offending word. If the sentence leans on a',
+      'stock rhythm, break it. Keep roughly the same length and match the surrounding prose.',
+      'Output only the rewritten sentence, with no quotation marks and no commentary.',
+      '',
+      'Sentence:',
+      sentence.trim(),
+    ].filter(Boolean).join('\n');
+
+    try {
+      const out = await runGeneration(prompt, {
+        maxTokens: 160,
+        temperature: 0.8,
+        connectionId: hit.connectionId,
+        userId,
+      });
+      if (out && !matcherFor(hit).test(out)) {
+        const trailing = (sentence.match(/\s*$/) || [''])[0];
+        sentences[i] = out.replace(/^["\u2018\u2019\u201c\u201d\s]+|["\u2018\u2019\u201c\u201d\s]+$/g, '') + trailing;
+        rewrites++;
+      }
+    } catch (err) {
+      spindle.log.error('[banned] rewrite failed - ' + message(err));
+      break;
+    }
+  }
+
+  return { text: sentences.join(''), swaps, rewrites };
 }
 
 spindle.log.info('Lorebook Web Scraper backend ready (v2.11). Continue fix registered.');
