@@ -222,7 +222,7 @@ function suggestKeywords(entry, limit) {
 }
 
 /** Single source of truth for the frontend build. */
-const FRONTEND_VERSION = '2.29.0';
+const FRONTEND_VERSION = '2.30.0';
 
 /** Marker separating an entry's own text from generated retrieval cues. */
 const CUE_START = '\n\n[cues]\n';

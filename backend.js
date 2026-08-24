@@ -1,5 +1,5 @@
 /** Single source of truth for the backend build, reported by Check setup. */
-const VERSION = '2.29.0';
+const VERSION = '2.30.0';
 
 /**
  * Lorebook Web Scraper — backend module. v2.0
@@ -922,15 +922,42 @@ const BOARD_MARKERS = [
   /\n\s*\*{0,2}Location:\*{0,2}\s/i,
 ];
 
-function stripTrailingBoard(text) {
+/**
+ * Remove a duplicated status board.
+ *
+ * A board legitimately appears once per reply. A continue can make the model
+ * emit a second one part-way through. Only that second board is removed, so a
+ * message with a single board is never touched - which matters because the
+ * update origin also fires on ordinary hand edits.
+ */
+function stripDuplicateBoard(text) {
   if (typeof text !== 'string' || !text) return { text, cut: 0 };
-  let earliest = -1;
+
+  const positions = [];
   for (const re of BOARD_MARKERS) {
-    const m = re.exec(text);
-    if (m && (earliest === -1 || m.index < earliest)) earliest = m.index;
+    const scan = new RegExp(re.source, re.flags.includes('g') ? re.flags : re.flags + 'g');
+    let m;
+    while ((m = scan.exec(text)) !== null) {
+      positions.push(m.index);
+      if (scan.lastIndex === m.index) scan.lastIndex++;
+    }
   }
-  if (earliest === -1) return { text, cut: 0 };
-  const kept = text.slice(0, earliest).trimEnd();
+  if (positions.length < 2) return { text, cut: 0 };
+
+  positions.sort((x, y) => x - y);
+
+  // Markers from the same board cluster together; treat a gap as a new board.
+  const boardStarts = [positions[0]];
+  for (const pos of positions) {
+    if (pos - boardStarts[boardStarts.length - 1] > 120) boardStarts.push(pos);
+  }
+  if (boardStarts.length < 2) return { text, cut: 0 };
+
+  const kept = text.slice(0, boardStarts[1]).trimEnd();
+
+  // Never gut a message: if the trim removes most of it, leave it alone.
+  if (kept.length < 40 || kept.length < text.length * 0.25) return { text, cut: 0 };
+
   return { text: kept, cut: text.length - kept.length };
 }
 
@@ -946,9 +973,11 @@ if (typeof spindle.registerMessageContentProcessor === 'function') {
 
       // There is no generationType here. A continue appends to an existing
       // message, so it arrives as an update rather than a fresh create.
+      // "update" is also the ordinary message edit endpoint, so this must be
+      // safe to run on hand-edited text: only a genuine duplicate is removed.
       if (ctx.origin !== 'update' && ctx.origin !== 'swipe_update') return;
 
-      const { text: stripped, cut } = stripTrailingBoard(text);
+      const { text: stripped, cut } = stripDuplicateBoard(text);
       if (cut <= 0) return;
 
       spindle.log.info(`[continue] removed ${cut} chars of duplicated status board`);
